@@ -1470,6 +1470,36 @@ Item {
               }
             }
 
+            // "Now" line, placed by the minute; root.now ticks every 30 s while open.
+            Item {
+              id: nowLine
+              readonly property real minute: root.now.getHours() * 60 + root.now.getMinutes() + root.now.getSeconds() / 60
+              readonly property int first: Model.START_HOUR * 60
+              readonly property int last: (Model.END_HOUR + 1) * 60
+              readonly property int row: root.currentSlot()
+              readonly property real frac: root.rows[row]
+                ? Math.max(0, Math.min(1, (minute - root.rows[row].min) / (root.rows[row].h * 30))) : 0
+              visible: root.isToday && !root.viewing && minute >= first && minute < last
+              x: grid.labelWidth - Style.space(5)
+              y: grid.slotY(row) + frac * grid.rowH(row) - height / 2
+              width: grid.width - x
+              height: Style.space(10)
+              z: 4
+
+              Rectangle {
+                width: parent.height; height: parent.height
+                radius: width / 2
+                color: root.accent
+              }
+              Rectangle {
+                x: parent.height / 2
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - x
+                height: Math.max(2, Style.space(2))
+                color: root.accent
+              }
+            }
+
             // Cursor outline
             Rectangle {
               visible: gridKeys.activeFocus && !root.editing && !root.exporting
