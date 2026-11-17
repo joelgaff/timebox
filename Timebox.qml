@@ -25,8 +25,21 @@ Item {
   property string brainDump: ""
   property string brainDump2: ""
   property var slotColors: ({})
+  property var splits: ({})
   property var otherSlots: ({})
   property var extraFields: ({})
+
+  // Newport-style revisions: snapshots of the schedule taken through the day,
+  // stored in the day file as "versions". viewVersion -1 is the live plan.
+  readonly property var versions: root.extraFields && Array.isArray(root.extraFields.versions) ? root.extraFields.versions : []
+  property int viewVersion: -1
+  readonly property bool viewing: root.viewVersion >= 0 && root.viewVersion < root.versions.length
+  readonly property var shownSlots: root.viewing ? Model.slotsFromMap(root.versions[root.viewVersion].slots, root.versions[root.viewVersion].splits) : root.slots
+  readonly property var shownSplits: root.viewing ? Model.splitsFromList(root.versions[root.viewVersion].splits) : root.splits
+  // Display rows (half hours, or 15-minute rows where split) and their text.
+  readonly property var rows: Model.buildRows(root.shownSplits)
+  readonly property var rowSlots: root.rows.map(function(r) { return root.shownSlots[r.q] || "" })
+  readonly property var shownColors: root.viewing ? (root.versions[root.viewVersion].slotColors || {}) : root.slotColors
   // Which field the text-color button applies to: "grid", "p0".."p2",
   // "dump1" or "dump2" (whatever was focused last).
   property string colorTarget: "grid"
@@ -40,8 +53,8 @@ Item {
   // Set when today's file exists but can't be read or parsed. Editing is
   // blocked so a save can never overwrite data we failed to load.
   property string loadError: ""
-  readonly property bool locked: loadError !== ""
-  readonly property var runInfo: Model.computeRuns(root.slots)
+  readonly property bool locked: loadError !== "" || viewing
+  readonly property var runInfo: Model.computeRuns(root.rowSlots)
 
   // Schedule selection (slot indexes) and inline editor
   property int anchorSlot: 0
@@ -68,12 +81,17 @@ Item {
   property string fontFamily: Style.font.menuFamily
   // Everything you write (priorities, notes, blocks, the date) uses a bundled
   // handwriting font, like pen on the paper planner; printed labels stay as is.
-  readonly property string handFamily: handFont.status === FontLoader.Ready ? handFont.name : fontFamily
-  readonly property real handScale: handFont.status === FontLoader.Ready ? 1.4 : 1
+  // Caveat is installed as a user font (~/.local/share/fonts) so it can't be
+  // unloaded with a plugin; the bundled copy only covers machines without it.
+  readonly property bool handInstalled: Qt.fontFamilies().indexOf("Caveat") >= 0
+  readonly property string handFamily: handInstalled ? "Caveat"
+    : handFont.status === FontLoader.Ready ? handFont.name : fontFamily
+  readonly property real handScale: handInstalled || handFont.status === FontLoader.Ready ? 1.4 : 1
   readonly property int cornerRadius: Style.cornerRadius
   readonly property int boxWidth: Math.max(2, Style.space(3))
 
   function open(payloadJson) {
+    root.lastScheduleEdit = 0
     root.now = new Date()
     root.setDay(new Date())
     if (!saveTimer.running) dayFile.reload()
@@ -85,6 +103,7 @@ Item {
   }
 
   function close() {
+    root.viewVersion = -1
     root.flush()
     root.editing = false
     root.opened = false
@@ -108,7 +127,85 @@ Item {
     if (Qt.formatDate(next, "yyyy-MM-dd") === root.dateKey) return
     root.flush()
     root.editing = false
+    root.viewVersion = -1
+    root.lastScheduleEdit = 0
     root.day = next
+  }
+
+  function notify(title, body) {
+    Quickshell.execDetached([
+      root.omarchyPath + "/bin/omarchy-notification-send",
+      "--app-name", "Timebox Planner", "-g", "󰋚", "-u", "low", "-t", "4000", title, body || ""
+    ])
+  }
+
+  // Freeze the schedule as it stands, before you change it. auto = taken by
+  // the planner itself before a round of edits: quiet, and tagged as such.
+  function snapshot(auto) {
+    if (root.locked) return
+    if (root.editing && !auto) root.commitEdit()
+    if (root.slots.every(function(s) { return !s })) {
+      if (!auto) root.notify("Nothing to snapshot", "The schedule is empty.")
+      return
+    }
+    var map = Model.slotsToMap(root.slots, root.otherSlots, root.splits)
+    var colors = JSON.parse(JSON.stringify(root.slotColors || {}))
+    var list = root.versions.slice()
+    var last = list.length ? list[list.length - 1] : null
+    if (last && JSON.stringify(last.slots) === JSON.stringify(map)
+        && JSON.stringify(last.slotColors || {}) === JSON.stringify(colors)) {
+      if (!auto) root.notify("No changes since v" + list.length)
+      return
+    }
+    var entry = { at: Qt.formatDateTime(new Date(), "yyyy-MM-ddTHH:mm:ss"), slots: map }
+    if (auto) entry.source = "auto"
+    var splitKeys = Model.splitList(root.splits)
+    if (splitKeys.length) entry.splits = splitKeys
+    if (Object.keys(colors).length) entry.slotColors = colors
+    list.push(entry)
+    var extra = Object.assign({}, root.extraFields)
+    extra.versions = list
+    root.extraFields = extra
+    saveTimer.stop()
+    root.save()
+    if (!auto) root.notify("Saved v" + list.length, "Snapshot at " + Model.shortTime(entry.at) + ". Edit away.")
+  }
+
+  // Automatic snapshots: before the first schedule change of a round of edits,
+  // keep the plan as it was. A round starts when the planner opens or after
+  // ten quiet minutes, so tweaks don't pile up a version per keystroke.
+  readonly property int editRoundMs: 10 * 60 * 1000
+  property real lastScheduleEdit: 0
+
+  function beforeScheduleChange() {
+    if (root.locked || root.loading) return
+    var now = Date.now()
+    if (now - root.lastScheduleEdit > root.editRoundMs) root.snapshot(true)
+    root.lastScheduleEdit = now
+  }
+
+  // Step through versions: -1 = older, +1 = newer (past the newest is Now).
+  function stepVersion(delta) {
+    var n = root.versions.length
+    if (!n) return
+    if (root.editing) root.commitEdit()
+    var cur = root.viewing ? root.viewVersion : n
+    var next = Math.max(0, Math.min(n, cur + delta))
+    root.viewVersion = next === n ? -1 : next
+  }
+
+  // Bring an old version back; the plan it replaces is snapshotted first.
+  function restoreVersion() {
+    if (!root.viewing) return
+    var v = root.versions[root.viewVersion]
+    root.viewVersion = -1
+    root.snapshot(true)
+    root.lastScheduleEdit = Date.now()
+    root.slots = Model.slotsFromMap(v.slots, v.splits)
+    root.splits = Model.splitsFromList(v.splits)
+    root.slotColors = JSON.parse(JSON.stringify(v.slotColors || {}))
+    saveTimer.stop()
+    root.save()
   }
 
   function shiftDay(delta) {
@@ -127,6 +224,7 @@ Item {
     root.brainDump = Model.tonesToColors(Model.isRichText(d.brainDump) ? d.brainDump : Model.plainToHtml(d.brainDump), root.tone)
     root.brainDump2 = Model.tonesToColors(Model.isRichText(d.brainDump2) ? d.brainDump2 : Model.plainToHtml(d.brainDump2), root.tone)
     root.slotColors = d.slotColors
+    root.splits = d.splits
     root.otherSlots = d.otherSlots
     root.extraFields = d.extra
     root.revision++
@@ -149,7 +247,7 @@ Item {
       slots: root.slots, priorities: root.priorities,
       brainDump: dumpEdit.length ? Model.colorsToTones(Model.cleanRichText(root.brainDump), root.tonePairs()) : "",
       brainDump2: dumpEdit2.length ? Model.colorsToTones(Model.cleanRichText(root.brainDump2), root.tonePairs()) : "",
-      slotColors: root.slotColors, otherSlots: root.otherSlots, extra: root.extraFields
+      slotColors: root.slotColors, otherSlots: root.otherSlots, splits: root.splits, extra: root.extraFields
     }
     var empty = !d.brainDump && !d.brainDump2 && root.slots.every(function(s) { return !s })
       && root.priorities.every(function(p) { return !p.text })
@@ -168,10 +266,35 @@ Item {
 
   function fillSelection(text) {
     if (root.locked) return
+    var changed = false
+    for (var c = root.selStart; c <= root.selEnd; c++) if (root.rowSlots[c] !== text) changed = true
+    if (!changed) return
+    root.beforeScheduleChange()
     var next = root.slots.slice()
-    for (var i = root.selStart; i <= root.selEnd; i++) next[i] = text
+    root.setRows(next, root.selStart, root.selEnd, text)
     root.slots = next
+    if (!text) root.mergeEmptied(root.selStart, root.selEnd)
     root.scheduleSave()
+  }
+
+  // After a delete, a split half hour with an empty quarter goes back to one row.
+  function mergeEmptied(from, to) {
+    var keepQ = root.rows[root.cursorSlot] ? root.rows[root.cursorSlot].q : 0
+    var next = Object.assign({}, root.splits)
+    var merged = false
+    for (var r = from; r <= to; r++) {
+      var row = root.rows[r]
+      if (!row || !row.quarter) continue
+      var h = row.half
+      if (!next[Model.slotKey(2 * h)]) continue
+      if (root.slots[2 * h] && root.slots[2 * h + 1]) continue
+      root.mergeHalf(h, next)
+      merged = true
+    }
+    if (!merged) return
+    root.splits = next
+    var r2 = root.rowForQuarter(keepQ)
+    root.cursorSlot = root.anchorSlot = r2
   }
 
   function tone(name) {
@@ -205,17 +328,70 @@ Item {
 
   // ---- schedule interaction ----
 
+  // Display row holding the current time (clamped to the shown hours).
   function currentSlot() {
-    var h = root.now.getHours()
-    var i = (h - Model.START_HOUR) * 2 + (root.now.getMinutes() >= 30 ? 1 : 0)
-    return Math.max(0, Math.min(Model.SLOTS - 1, i))
+    var m = root.now.getHours() * 60 + root.now.getMinutes()
+    var idx = 0
+    for (var r = 0; r < root.rows.length; r++) if (root.rows[r].min <= m) idx = r
+    return idx
+  }
+
+  function rowForQuarter(q) {
+    for (var r = root.rows.length - 1; r >= 0; r--) if (root.rows[r].q <= q) return r
+    return 0
+  }
+
+  // Write text into every quarter of the given display rows.
+  function setRows(slots, from, to, text) {
+    for (var r = from; r <= to; r++) {
+      var row = root.rows[r]
+      for (var q = row.q; q < row.q + row.n; q++) slots[q] = text
+    }
+  }
+
+  // Click a time label: split that half hour into 15-minute rows, or merge back.
+  function toggleSplit(rowIndex) {
+    if (root.locked) return
+    if (root.editing) root.commitEdit()
+    var row = root.rows[rowIndex]
+    var h = row.half
+    var k0 = Model.slotKey(2 * h), k1 = Model.slotKey(2 * h + 1)
+    var keepQ = row.q
+    var next = Object.assign({}, root.splits)
+    if (next[k0]) {
+      var a = root.slots[2 * h], b = root.slots[2 * h + 1]
+      if (a && b && a !== b) root.beforeScheduleChange()
+      root.mergeHalf(h, next)
+      keepQ = 2 * h
+    } else {
+      next[k0] = true
+    }
+    root.splits = next
+    root.cursorSlot = root.anchorSlot = root.rowForQuarter(keepQ)
+    root.scheduleSave()
+  }
+
+  // Fold a split half hour back into one row; the text that's there wins.
+  function mergeHalf(h, nextSplits) {
+    var k0 = Model.slotKey(2 * h), k1 = Model.slotKey(2 * h + 1)
+    var slots = root.slots.slice()
+    var keep = slots[2 * h] || slots[2 * h + 1]
+    slots[2 * h] = slots[2 * h + 1] = keep
+    root.slots = slots
+    var colors = Object.assign({}, root.slotColors)
+    if (!colors[k0] && colors[k1]) colors[k0] = colors[k1]
+    delete colors[k1]
+    root.slotColors = colors
+    delete nextSplits[k0]
   }
 
   function moveCursor(delta, extend) {
-    var next = Math.max(0, Math.min(Model.SLOTS - 1, root.cursorSlot + delta))
+    var next = Math.max(0, Math.min(root.rows.length - 1, root.cursorSlot + delta))
     root.cursorSlot = next
     if (!extend) root.anchorSlot = next
   }
+
+  onCursorSlotChanged: Qt.callLater(function() { gridScroll.ensureVisible(root.cursorSlot) })
 
   function startEdit(initial) {
     if (root.locked) return
@@ -239,19 +415,21 @@ Item {
   function copySlots() {
     var texts = [], colors = []
     for (var i = root.selStart; i <= root.selEnd; i++) {
-      texts.push(root.slots[i])
-      colors.push(root.slotColors[Model.slotKey(i)] || "")
+      texts.push(root.rowSlots[i])
+      colors.push(root.slotColors[root.rows[i].key] || "")
     }
     Quickshell.clipboardText = texts.join("\n")
     root.copied = { text: texts.join("\n"), colors: colors }
   }
 
   function cutSlots() {
+    if (root.locked) return
+    root.beforeScheduleChange()
     root.copySlots()
-    root.fillSelection("")
     var next = Object.assign({}, root.slotColors)
-    for (var i = root.selStart; i <= root.selEnd; i++) delete next[Model.slotKey(i)]
+    for (var i = root.selStart; i <= root.selEnd; i++) delete next[root.rows[i].key]
     root.slotColors = next
+    root.fillSelection("")
   }
 
   function pasteSlots() {
@@ -263,60 +441,31 @@ Item {
     var nextSlots = root.slots.slice()
     var nextColors = Object.assign({}, root.slotColors)
     function put(i, j) {
-      nextSlots[i] = lines[j].trim()
-      var key = Model.slotKey(i)
+      root.setRows(nextSlots, i, i, lines[j].trim())
+      var key = root.rows[i].key
       if (colors && colors[j]) nextColors[key] = colors[j]
       else if (colors) delete nextColors[key]
     }
     if (lines.length === 1) {
       for (var i = root.selStart; i <= root.selEnd; i++) put(i, 0)
     } else {
-      var end = Math.min(Model.SLOTS - 1, root.selStart + lines.length - 1)
+      var end = Math.min(root.rows.length - 1, root.selStart + lines.length - 1)
       for (var k = root.selStart; k <= end; k++) put(k, k - root.selStart)
       root.anchorSlot = root.selStart
       root.cursorSlot = end
     }
+    root.beforeScheduleChange()
     root.slots = nextSlots
     root.slotColors = nextColors
     root.scheduleSave()
   }
 
-  // ---- save the page as an image (e.g. to keep on your phone) ----
-  // Buttons, cursor and hints are hidden while the picture is taken.
   property bool exporting: false
-  property string imageDir: Quickshell.env("HOME") + "/Pictures"
-
-  function saveImage() {
-    root.inkOpen = false
-    root.paletteOpen = false
-    if (root.editing) root.commitEdit()
-    root.flush()
-    root.exporting = true
-    Qt.callLater(function() {
-      var path = root.imageDir + "/timebox-" + root.dateKey + ".png"
-      var ok = card.grabToImage(function(result) {
-        var saved = result.saveToFile(path)
-        root.exporting = false
-        Quickshell.execDetached(saved ? [
-          root.omarchyPath + "/bin/omarchy-notification-send",
-          "--app-name", "Timebox Planner", "-g", "󰋩", "-u", "normal", "-t", "10000",
-          "Planner saved as an image",
-          path.replace(Quickshell.env("HOME"), "~") + " · click to send it to your phone",
-          "--exec", "omarchy", "share", "file", path
-        ] : [
-          root.omarchyPath + "/bin/omarchy-notification-send",
-          "--app-name", "Timebox Planner", "-u", "critical",
-          "Couldn't save the planner image", path
-        ])
-      }, Qt.size(card.width * 2, card.height * 2))
-      if (!ok) root.exporting = false
-    })
-  }
 
   function commitAndMoveDown() {
     var single = root.selStart === root.selEnd
     root.commitEdit()
-    if (single) root.moveCursor(2, false)
+    if (single) root.moveCursor(1, false)
   }
 
   function cancelEdit() {
@@ -325,7 +474,7 @@ Item {
   }
 
   function inRun(a, b) {
-    if (b < 0 || b >= Model.SLOTS) return false
+    if (b < 0 || b >= root.rows.length) return false
     var r = root.runInfo.runOf[a]
     return r >= 0 && root.runInfo.runOf[b] === r
   }
@@ -371,6 +520,9 @@ Item {
     atomicWrites: true
     blockWrites: true
     printErrors: false
+    // Pick up days written from outside (timebox-import), unless an edit is pending.
+    watchChanges: true
+    onFileChanged: if (!saveTimer.running && !root.editing) reload()
     onLoaded: { root.fileExists = true; root.loadError = ""; root.applyData(text()) }
     onLoadFailed: function(error) {
       root.fileExists = error !== FileViewError.FileNotFound
@@ -549,26 +701,27 @@ Item {
               spacing: Style.space(4)
 
               Rectangle {
-                width: saveText.implicitWidth + Style.space(16)
+                width: snapText.implicitWidth + Style.space(16)
                 height: Style.space(28)
                 radius: root.cornerRadius
-                color: saveMouse.containsMouse ? Util.alpha(root.foreground, 0.1) : "transparent"
+                color: snapMouse.containsMouse ? Util.alpha(root.foreground, 0.1) : "transparent"
                 border.color: root.line
                 border.width: 1
+                opacity: root.locked ? 0.4 : 1
                 Text {
-                  id: saveText
+                  id: snapText
                   anchors.centerIn: parent
-                  text: "󰋩  Save image"
+                  text: "󰋚  Snapshot" + (root.versions.length ? " (" + root.versions.length + ")" : "")
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                 }
                 MouseArea {
-                  id: saveMouse
+                  id: snapMouse
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.saveImage()
+                  onClicked: root.snapshot()
                 }
               }
 
@@ -970,49 +1123,182 @@ Item {
           anchors.topMargin: content.sectionGap
           anchors.bottom: footer.top
 
-          // ---- :00 / :30 header ----
+          // ---- Versions strip (snapshots of the day) ----
           Item {
             id: colHeader
             anchors.top: parent.top
             width: parent.width
-            height: Style.font.title + Style.space(12)
+            height: root.versions.length && !root.exporting ? Style.space(28) + Style.space(10) : 0
+            visible: height > 0
+            clip: true
 
-            Repeater {
-              model: ["00:", "30:"]
+            component VersionArrow: Rectangle {
+              id: arrow
+              property string glyph
+              property bool active: true
+              signal activated()
+              width: Style.space(28)
+              height: Style.space(28)
+              radius: root.cornerRadius
+              color: arrowMouse.containsMouse && active ? Util.alpha(root.foreground, 0.1) : "transparent"
+              border.color: root.line
+              border.width: 1
+              opacity: active ? 1 : 0.35
               Text {
-                required property int index
-                required property var modelData
-                x: grid.labelWidth + index * grid.cellWidth
-                width: grid.cellWidth
-                horizontalAlignment: Text.AlignHCenter
-                text: modelData
+                anchors.centerIn: parent
+                text: arrow.glyph
                 color: root.foreground
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
+                font.pixelSize: Style.font.body
+              }
+              MouseArea {
+                id: arrowMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: arrow.active ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: if (arrow.active) { arrow.activated(); gridKeys.forceActiveFocus() }
               }
             }
+
+            VersionArrow {
+              id: versionPrev
+              anchors.left: parent.left
+              glyph: "‹"
+              active: root.viewing ? root.viewVersion > 0 : root.versions.length > 0
+              onActivated: root.stepVersion(-1)
+            }
+
+            VersionArrow {
+              id: versionNext
+              anchors.left: versionFlick.right
+              anchors.leftMargin: Style.space(4)
+              glyph: "›"
+              active: root.viewing
+              onActivated: root.stepVersion(1)
+            }
+
+            Flickable {
+              id: versionFlick
+              anchors.left: versionPrev.right
+              anchors.leftMargin: Style.space(4)
+              // Hug the chips so ‹ v1 v2 Now › stay together; scroll when they don't fit.
+              width: Math.min(versionRow.width,
+                (restoreButton.visible ? restoreButton.x - Style.space(8) : colHeader.width)
+                  - versionPrev.width * 2 - Style.space(8))
+              height: Style.space(28)
+              contentWidth: versionRow.width
+              flickableDirection: Flickable.HorizontalFlick
+              boundsBehavior: Flickable.StopAtBounds
+              clip: true
+              // Newest versions (and Now) stay in view.
+              onContentWidthChanged: contentX = Math.max(0, contentWidth - width)
+
+              Row {
+                id: versionRow
+                spacing: Style.space(4)
+                Repeater {
+                  model: root.versions.length + 1
+                  Rectangle {
+                    id: chip
+                    required property int index
+                    readonly property int ver: index < root.versions.length ? index : -1
+                    readonly property bool active: root.viewVersion === ver
+                    width: chipText.implicitWidth + Style.space(16)
+                    height: Style.space(28)
+                    radius: root.cornerRadius
+                    color: active ? Util.alpha(root.accent, 0.22)
+                      : chipMouse.containsMouse ? Util.alpha(root.foreground, 0.1) : "transparent"
+                    border.color: active ? root.accent : root.line
+                    border.width: 1
+                    Text {
+                      id: chipText
+                      anchors.centerIn: parent
+                      text: chip.ver < 0 ? "Now" : "v" + (chip.ver + 1) + " · " + Model.shortTime(root.versions[chip.ver].at)
+                      color: chip.active ? root.accent : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: chip.active
+                    }
+                    MouseArea {
+                      id: chipMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: { if (root.editing) root.commitEdit(); root.viewVersion = chip.ver; gridKeys.forceActiveFocus() }
+                    }
+                  }
+                }
+              }
+            }
+
+            Rectangle {
+              id: restoreButton
+              visible: root.viewing
+              anchors.right: parent.right
+              width: restoreText.implicitWidth + Style.space(16)
+              height: Style.space(28)
+              radius: root.cornerRadius
+              color: restoreMouse.containsMouse ? Util.alpha(root.foreground, 0.1) : "transparent"
+              border.color: root.line
+              border.width: 1
+              Text {
+                id: restoreText
+                anchors.centerIn: parent
+                text: "Restore this version"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+              MouseArea {
+                id: restoreMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.restoreVersion()
+              }
+            }
+
           }
 
-          // ---- Schedule grid ----
-          Item {
-            id: grid
+          // ---- Schedule: one column of half-hour rows, scrolls when tall ----
+          Flickable {
+            id: gridScroll
             anchors.top: colHeader.bottom
             anchors.bottom: parent.bottom
             width: parent.width
+            clip: true
+            contentWidth: width
+            contentHeight: grid.height
+            boundsBehavior: Flickable.StopAtBounds
 
-            readonly property real labelWidth: Style.space(50)
-            readonly property real cellWidth: (width - labelWidth) / 2
-            readonly property real rowHeight: height / Model.ROWS
-
-            function slotAt(mx, my) {
-              var row = Math.max(0, Math.min(Model.ROWS - 1, Math.floor(my / rowHeight)))
-              var col = mx < labelWidth + cellWidth ? 0 : 1
-              return row * 2 + col
+            function ensureVisible(i) {
+              var top = grid.slotY(i), bottom = top + grid.rowH(i)
+              if (top < contentY) contentY = top
+              else if (bottom > contentY + height) contentY = bottom - height
             }
 
-            function slotX(i) { return labelWidth + (i % 2) * cellWidth }
-            function slotY(i) { return Math.floor(i / 2) * rowHeight }
+          Item {
+            id: grid
+            width: gridScroll.width - (gridScroll.contentHeight > gridScroll.height ? Style.space(14) : 0)
+            height: Model.HALVES * rowHeight
+
+            readonly property real labelWidth: Style.space(50)
+            readonly property real cellWidth: width - labelWidth
+            // Height of a half hour; a 15-minute row is half of it.
+            // Tall enough that a 15-minute row (half of this) still fits readable text.
+            readonly property real rowHeight: Math.max(Style.font.title * 3.2, gridScroll.height / Model.HALVES)
+
+            function slotAt(mx, my) {
+              var u = my / rowHeight
+              var idx = 0
+              for (var r = 0; r < root.rows.length; r++) if (root.rows[r].y <= u) idx = r
+              return idx
+            }
+
+            function slotX(i) { return labelWidth }
+            function slotY(i) { return root.rows[i] ? root.rows[i].y * rowHeight : 0 }
+            function rowH(i) { return root.rows[i] ? root.rows[i].h * rowHeight : rowHeight }
+            function textSize(i) { return Math.min(Style.font.heading * root.handScale * 1.25, rowH(i) * 0.82) }
 
             Item {
               id: gridKeys
@@ -1024,21 +1310,22 @@ Item {
                 var shift = (event.modifiers & Qt.ShiftModifier) !== 0
                 var k = event.key
                 var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
-                if (ctrl && k === Qt.Key_C) root.copySlots()
+                if (ctrl && k === Qt.Key_S) root.snapshot()
+                else if (ctrl && k === Qt.Key_C) root.copySlots()
                 else if (ctrl && k === Qt.Key_X) root.cutSlots()
                 else if (ctrl && k === Qt.Key_V) root.pasteSlots()
-                else if (k === Qt.Key_Escape) root.dismiss()
-                else if (k === Qt.Key_Up) root.moveCursor(-2, shift)
-                else if (k === Qt.Key_Down) root.moveCursor(2, shift)
-                else if (k === Qt.Key_Left) root.moveCursor(-1, shift)
-                else if (k === Qt.Key_Right) root.moveCursor(1, shift)
+                else if (k === Qt.Key_Escape) { if (root.viewing) root.viewVersion = -1; else root.dismiss() }
+                else if (k === Qt.Key_Up) root.moveCursor(-1, shift)
+                else if (k === Qt.Key_Down) root.moveCursor(1, shift)
+                else if (k === Qt.Key_Left) root.stepVersion(-1)
+                else if (k === Qt.Key_Right) root.stepVersion(1)
                 else if (k === Qt.Key_PageUp) root.shiftDay(-1)
                 else if (k === Qt.Key_PageDown) root.shiftDay(1)
                 else if (k === Qt.Key_Home) root.setDay(new Date())
                 else if (k === Qt.Key_Tab) root.moveCursor(1, false)
                 else if (k === Qt.Key_Backtab) root.moveCursor(-1, false)
                 else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_F2)
-                  root.startEdit(root.slots[root.selStart] || "")
+                  root.startEdit(root.rowSlots[root.selStart] || "")
                 else if (k === Qt.Key_Delete || k === Qt.Key_Backspace) root.fillSelection("")
                 else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32
                          && event.text.charCodeAt(0) !== 127 && !(event.modifiers & Qt.ControlModifier))
@@ -1055,39 +1342,51 @@ Item {
               color: Util.alpha(root.foreground, 0.05)
             }
 
+            // Time labels; click one to split its half hour into 15-minute rows
+            // (or merge them back).
             Repeater {
-              model: Model.ROWS
+              model: root.rows.length
               Text {
+                id: timeLabel
                 required property int index
-                readonly property bool current: root.isToday
-                  && root.now.getHours() === Model.START_HOUR + index
-                y: index * grid.rowHeight
+                readonly property var row: root.rows[index]
+                readonly property bool minor: row ? row.min % 60 !== 0 : false
+                readonly property bool current: root.isToday && root.currentSlot() === index
+                y: grid.slotY(index)
                 width: grid.labelWidth
-                height: grid.rowHeight
+                height: grid.rowH(index)
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
-                text: Model.hourLabel(index)
-                color: current ? root.accent : root.foreground
+                text: row ? Model.rowLabel(row) : ""
+                color: current || labelMouse.containsMouse ? root.accent : root.foreground
+                opacity: minor && !current && !labelMouse.containsMouse ? 0.55 : 1
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
+                font.pixelSize: Math.min(minor ? Style.font.title * 0.75 : Style.font.title, height * 0.7)
+                font.bold: !minor
+                MouseArea {
+                  id: labelMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  enabled: !root.locked
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: { root.toggleSplit(timeLabel.index); gridKeys.forceActiveFocus() }
+                }
               }
             }
 
             // Cells: selection fill + timebox borders
             Repeater {
-              model: Model.SLOTS
+              model: root.rows.length
               Item {
                 id: cell
                 required property int index
-                readonly property int col: index % 2
+                // Every block gets a box, single half-hour and 15-minute ones too.
                 readonly property bool boxed: root.runInfo.runOf[index] >= 0
-                  && root.runInfo.runs[root.runInfo.runOf[index]].len >= 2
                 readonly property bool selected: index >= root.selStart && index <= root.selEnd
                 x: grid.slotX(index)
                 y: grid.slotY(index)
                 width: grid.cellWidth
-                height: grid.rowHeight
+                height: grid.rowH(index)
 
                 Rectangle {
                   anchors.fill: parent
@@ -1097,28 +1396,28 @@ Item {
 
                 // Box edges only where the neighbouring slot is not part of the same timebox
                 Rectangle {
-                  visible: cell.boxed && !root.inRun(cell.index, cell.index - 2)
+                  visible: cell.boxed && !root.inRun(cell.index, cell.index - 1)
                   width: parent.width; height: root.boxWidth
                   y: -root.boxWidth / 2
                   color: root.accent
                   z: 2
                 }
                 Rectangle {
-                  visible: cell.boxed && !root.inRun(cell.index, cell.index + 2)
+                  visible: cell.boxed && !root.inRun(cell.index, cell.index + 1)
                   width: parent.width; height: root.boxWidth
                   y: parent.height - root.boxWidth / 2
                   color: root.accent
                   z: 2
                 }
                 Rectangle {
-                  visible: cell.boxed && !(cell.col === 1 && root.inRun(cell.index, cell.index - 1))
+                  visible: cell.boxed
                   width: root.boxWidth; height: parent.height + root.boxWidth
                   x: -root.boxWidth / 2; y: -root.boxWidth / 2
                   color: root.accent
                   z: 2
                 }
                 Rectangle {
-                  visible: cell.boxed && !(cell.col === 0 && root.inRun(cell.index, cell.index + 1))
+                  visible: cell.boxed
                   width: root.boxWidth; height: parent.height + root.boxWidth
                   x: parent.width - root.boxWidth / 2; y: -root.boxWidth / 2
                   color: root.accent
@@ -1129,16 +1428,19 @@ Item {
 
             // Grid lines
             Repeater {
-              model: Model.ROWS + 1
+              model: root.rows.length + 1
               Rectangle {
                 required property int index
-                y: Math.min(grid.height - 1, index * grid.rowHeight)
-                width: grid.width; height: 1
+                readonly property int m: index < root.rows.length ? root.rows[index].min % 60 : 0
+                y: index < root.rows.length ? grid.slotY(index) : grid.height - 1
+                x: m === 0 ? 0 : grid.labelWidth
+                width: grid.width - x; height: 1
                 color: root.line
+                opacity: m === 0 ? 1 : m === 30 ? 0.45 : 0.25
               }
             }
             Repeater {
-              model: [0, grid.labelWidth, grid.labelWidth + grid.cellWidth, grid.width - 1]
+              model: [0, grid.labelWidth, grid.width - 1]
               Rectangle {
                 required property var modelData
                 x: modelData
@@ -1153,18 +1455,16 @@ Item {
               Text {
                 required property var modelData
                 readonly property int start: modelData.start
-                readonly property int col: start % 2
-                readonly property bool spansRow: col === 0 && modelData.len >= 2
                 visible: !(root.editing && start >= root.selStart && start <= root.selEnd)
                 x: grid.slotX(start) + Style.space(12)
                 y: grid.slotY(start)
-                width: (spansRow ? grid.cellWidth * 2 : grid.cellWidth) - Style.space(24)
-                height: grid.rowHeight
+                width: grid.cellWidth - Style.space(24)
+                height: grid.rowH(start)
                 verticalAlignment: Text.AlignVCenter
                 text: modelData.text
-                color: root.tone(root.slotColors[Model.slotKey(start)])
+                color: root.tone(root.shownColors[root.rows[start] ? root.rows[start].key : ""])
                 font.family: root.handFamily
-                font.pixelSize: Math.min(Style.font.heading * root.handScale * 1.25, grid.rowHeight * 0.82)
+                font.pixelSize: grid.textSize(start)
                 elide: Text.ElideRight
                 z: 3
               }
@@ -1176,7 +1476,7 @@ Item {
               x: grid.slotX(root.cursorSlot)
               y: grid.slotY(root.cursorSlot)
               width: grid.cellWidth
-              height: grid.rowHeight
+              height: grid.rowH(root.cursorSlot)
               color: "transparent"
               border.color: root.accent
               border.width: 1
@@ -1197,18 +1497,17 @@ Item {
               onPositionChanged: function(mouse) {
                 if (pressed) root.cursorSlot = grid.slotAt(mouse.x + grid.labelWidth, mouse.y)
               }
-              onDoubleClicked: root.startEdit(root.slots[root.selStart] || "")
+              onDoubleClicked: root.startEdit(root.rowSlots[root.selStart] || "")
             }
 
             // Inline editor over the selection
             Rectangle {
               id: editorBox
               visible: root.editing
-              readonly property bool multiRow: Math.floor(root.selStart / 2) !== Math.floor(root.selEnd / 2)
-              x: multiRow ? grid.labelWidth : grid.slotX(root.selStart)
+              x: grid.labelWidth
               y: grid.slotY(root.selStart)
-              width: multiRow ? grid.cellWidth * 2 : grid.slotX(root.selEnd) + grid.cellWidth - x
-              height: grid.rowHeight
+              width: grid.cellWidth
+              height: grid.rowH(root.selStart)
               color: root.background
               border.color: root.accent
               border.width: root.boxWidth
@@ -1222,7 +1521,7 @@ Item {
                 verticalAlignment: TextInput.AlignVCenter
                 color: root.foreground
                 font.family: root.handFamily
-                font.pixelSize: Math.min(Style.font.heading * root.handScale * 1.25, grid.rowHeight * 0.82)
+                font.pixelSize: grid.textSize(root.selStart)
                 selectionColor: root.selectionFill
                 selectByMouse: true
                 clip: true
@@ -1234,6 +1533,18 @@ Item {
                 onActiveFocusChanged: if (!activeFocus && root.editing) root.commitEdit()
               }
             }
+          }
+          }
+
+          // Scroll indicator (only when the day doesn't fit)
+          Rectangle {
+            visible: gridScroll.contentHeight > gridScroll.height
+            anchors.right: parent.right
+            y: gridScroll.y + gridScroll.visibleArea.yPosition * gridScroll.height
+            width: Style.space(6)
+            height: gridScroll.visibleArea.heightRatio * gridScroll.height
+            radius: width / 2
+            color: Util.alpha(root.foreground, 0.35)
           }
         }
 
@@ -1368,10 +1679,12 @@ Item {
           anchors.left: parent.left
           height: content.footerHeight
           verticalAlignment: Text.AlignBottom
-          text: root.locked
+          text: root.loadError !== ""
             ? "⚠  " + root.loadError + ". Read-only so it isn't overwritten; fix the file, then reopen."
-            : "Type to fill  •  Tab next  •  Enter down  •  Ctrl C/X/V  •  A color  •  Del clear  •  PgUp/PgDn day  •  Esc close"
-          color: root.locked ? root.urgentColor : root.muted
+            : root.viewing
+            ? "Viewing v" + (root.viewVersion + 1) + " of " + root.versions.length + " from " + Model.shortTime(root.versions[root.viewVersion].at) + " (read-only)  •  ←/→ versions  •  Esc or Now to go back"
+            : "Type to fill  •  Enter down  •  Ctrl S snapshot  •  ←/→ versions  •  Ctrl C/X/V  •  A color  •  Del clear  •  PgUp/PgDn day  •  Esc close"
+          color: root.loadError !== "" ? root.urgentColor : root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           font.letterSpacing: Style.space(1)
@@ -1399,10 +1712,11 @@ Item {
       var runOf = root.runInfo.runOf, runs = root.runInfo.runs
       if (runOf[from] >= 0) from = runs[runOf[from]].start
       if (runOf[to] >= 0) to = runs[runOf[to]].start + runs[runOf[to]].len - 1
+      root.beforeScheduleChange()
       var next = Object.assign({}, root.slotColors)
       for (var i = from; i <= to; i++) {
-        if (color) next[Model.slotKey(i)] = color
-        else delete next[Model.slotKey(i)]
+        if (color) next[root.rows[i].key] = color
+        else delete next[root.rows[i].key]
       }
       root.slotColors = next
       root.scheduleSave()

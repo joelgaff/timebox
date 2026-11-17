@@ -1,18 +1,23 @@
 .pragma library
 
-// Schedule covers 7 AM through the 11 PM row, in half-hour slots.
-var START_HOUR = 7
-var END_HOUR = 23
+// Schedule covers 6 AM through the 7 PM row (ends 8 PM). Data lives on a
+// 15-minute grid (SLOTS quarters); the planner shows each half hour as one row
+// unless that half hour is split into two 15-minute rows.
+var START_HOUR = 6
+var END_HOUR = 19
 var ROWS = END_HOUR - START_HOUR + 1
-var SLOTS = ROWS * 2
+var HALVES = ROWS * 2
+var SLOTS = ROWS * 4
 var PRIORITIES = 3
 
 function pad(n) {
   return n < 10 ? "0" + n : "" + n
 }
 
+// Quarter index -> "HH:MM"
 function slotKey(i) {
-  return pad(START_HOUR + Math.floor(i / 2)) + ":" + (i % 2 === 0 ? "00" : "30")
+  var m = START_HOUR * 60 + i * 15
+  return pad(Math.floor(m / 60)) + ":" + pad(m % 60)
 }
 
 function hourLabel(row) {
@@ -28,11 +33,11 @@ function emptyDay() {
   return {
     slots: slots, priorities: priorities,
     brainDump: "", brainDump2: "",
-    slotColors: {}, otherSlots: {}, extra: {}
+    slotColors: {}, otherSlots: {}, splits: {}, extra: {}
   }
 }
 
-var KNOWN_FIELDS = ["date", "priorities", "brainDump", "brainDump2", "slots", "slotColors"]
+var KNOWN_FIELDS = ["date", "priorities", "brainDump", "brainDump2", "slots", "slotColors", "splits"]
 
 // Returns null when the file has content that isn't a valid day, so callers
 // can refuse to overwrite it instead of treating it as an empty day.
@@ -43,11 +48,10 @@ function parseDay(raw) {
   try { data = JSON.parse(raw) } catch (e) { return null }
   if (!data || typeof data !== "object" || Array.isArray(data)) return null
 
-  if (data.slots && typeof data.slots === "object") {
-    for (var i = 0; i < SLOTS; i++) {
-      var v = data.slots[slotKey(i)]
-      if (typeof v === "string") day.slots[i] = v
-    }
+  if (data.slots && typeof data.slots === "object" && !Array.isArray(data.slots)) {
+    var grid = mapToSlots(data.slots, data.splits)
+    day.slots = grid.slots
+    day.splits = grid.splits
     // Entries outside the visible hours (e.g. saved when the day started
     // earlier) are kept as-is so saving never drops them.
     var shown = {}
@@ -78,12 +82,7 @@ function parseDay(raw) {
 }
 
 function serializeDay(dateKey, day) {
-  var slots = {}
-  var other = day.otherSlots || {}
-  for (var key in other) slots[key] = other[key]
-  for (var i = 0; i < SLOTS; i++) {
-    if (day.slots[i]) slots[slotKey(i)] = day.slots[i]
-  }
+  var slots = slotsToMap(day.slots, day.otherSlots, day.splits)
   var out = {}
   var extra = day.extra || {}
   for (var f in extra) out[f] = extra[f]
@@ -92,6 +91,8 @@ function serializeDay(dateKey, day) {
   out.brainDump = day.brainDump
   if (day.brainDump2) out.brainDump2 = day.brainDump2
   out.slots = slots
+  var splitKeys = splitList(day.splits)
+  if (splitKeys.length) out.splits = splitKeys
   var colors = day.slotColors || {}
   if (Object.keys(colors).length) out.slotColors = colors
   return JSON.stringify(out, null, 2) + "\n"
@@ -117,8 +118,8 @@ function cleanRichText(html) {
     .replace(/font-style:[^;"]*;?/g, "")
 }
 
-// Consecutive slots holding the same text form one run; runs of two or more
-// slots are drawn as a boxed timebox.
+// Consecutive slots holding the same text form one run; each run is drawn
+// as a boxed timebox.
 function computeRuns(slots) {
   var runOf = []
   var runs = []
@@ -137,7 +138,7 @@ function computeRuns(slots) {
 }
 
 function slotMinutes(i) {
-  return START_HOUR * 60 + i * 30
+  return START_HOUR * 60 + i * 15
 }
 
 // "9:30 AM" style, matching the bar clock.
@@ -234,4 +235,90 @@ function colorsToTones(html, pairs) {
     out = out.replace(new RegExp("color:\\s*" + hex + "(?![0-9a-f])", "gi"), "color:tb-" + pairs[i].name)
   }
   return out
+}
+
+// ---- versions (snapshots of the schedule) ----
+
+// { "HH:MM": text } (+ split half keys) -> quarter slots and the split set.
+// A half hour not split stores one "HH:00"/"HH:30" key for both quarters; a
+// split one may also store its ":15"/":45" key, which marks it split too.
+function mapToSlots(map, splitKeys) {
+  var splits = splitsFromList(splitKeys)
+  var slots = []
+  for (var h = 0; h < HALVES; h++) {
+    var k0 = slotKey(2 * h), k1 = slotKey(2 * h + 1)
+    var a = map && typeof map[k0] === "string" ? map[k0] : ""
+    var hasB = map && typeof map[k1] === "string"
+    var split = !!splits[k0] || hasB
+    if (split) splits[k0] = true
+    slots.push(a, split ? (hasB ? map[k1] : "") : a)
+  }
+  return { slots: slots, splits: splits }
+}
+
+// Quarter slots -> { "HH:MM": text } as stored on disk, keeping hidden slots.
+function slotsToMap(slots, otherSlots, splits) {
+  var map = {}
+  var other = otherSlots || {}
+  for (var key in other) map[key] = other[key]
+  for (var h = 0; h < HALVES; h++) {
+    var k0 = slotKey(2 * h), a = slots[2 * h], b = slots[2 * h + 1]
+    if (splits && splits[k0]) {
+      if (a) map[k0] = a
+      if (b) map[slotKey(2 * h + 1)] = b
+    } else if (a) {
+      map[k0] = a
+    }
+  }
+  return map
+}
+
+function slotsFromMap(map, splitKeys) {
+  return mapToSlots(map, splitKeys).slots
+}
+
+function splitsFromList(list) {
+  var out = {}
+  if (Array.isArray(list)) for (var i = 0; i < list.length; i++) out[String(list[i])] = true
+  return out
+}
+
+function splitList(splits) {
+  var out = []
+  for (var k in (splits || {})) if (splits[k]) out.push(k)
+  return out.sort()
+}
+
+// Display rows: one per half hour, or two 15-minute rows where split.
+// y and h are in half-hour units, so a split half takes the same height.
+function buildRows(splits) {
+  var rows = []
+  var y = 0
+  for (var h = 0; h < HALVES; h++) {
+    var k0 = slotKey(2 * h)
+    var min = START_HOUR * 60 + h * 30
+    if (splits && splits[k0]) {
+      rows.push({ q: 2 * h, n: 1, half: h, min: min, key: k0, quarter: true, y: y, h: 0.5 })
+      rows.push({ q: 2 * h + 1, n: 1, half: h, min: min + 15, key: slotKey(2 * h + 1), quarter: true, y: y + 0.5, h: 0.5 })
+    } else {
+      rows.push({ q: 2 * h, n: 2, half: h, min: min, key: k0, quarter: false, y: y, h: 1 })
+    }
+    y += 1
+  }
+  return rows
+}
+
+// "7" on the hour, ":15" / ":30" / ":45" otherwise.
+function rowLabel(row) {
+  var m = row.min % 60
+  if (m === 0) return hourLabel(Math.floor(row.min / 60) - START_HOUR)
+  return ":" + pad(m)
+}
+
+// "2026-11-17T09:05:00" -> "9:05 AM"
+function shortTime(stamp) {
+  var m = /T(\d{2}):(\d{2})/.exec(String(stamp || ""))
+  if (!m) return "?"
+  var h = parseInt(m[1], 10)
+  return (h % 12 === 0 ? 12 : h % 12) + ":" + m[2] + (h < 12 ? " AM" : " PM")
 }

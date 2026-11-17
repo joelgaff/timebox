@@ -24,7 +24,7 @@ BarWidget {
 
   readonly property int nowMinutes: now.getHours() * 60 + now.getMinutes()
   readonly property int nowSlot: {
-    var i = (now.getHours() - Model.START_HOUR) * 2 + (now.getMinutes() >= 30 ? 1 : 0)
+    var i = Math.floor(((now.getHours() - Model.START_HOUR) * 60 + now.getMinutes()) / 15)
     return i >= 0 && i < Model.SLOTS ? i : -1
   }
   readonly property var current: nowSlot >= 0 && info.runOf[nowSlot] >= 0 ? info.runs[info.runOf[nowSlot]] : null
