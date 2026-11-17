@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Fill a Timebox day from a JSON plan (made for Grok Bot, works for anything).
+
+Usage:
+  timebox-import [--dry-run] [FILE]      # reads stdin when FILE is omitted
+  timebox-import --show [YYYY-MM-DD]     # print a day's schedule
+
+Plan format (every field but "blocks" is optional):
+  {
+    "date": "2026-11-17",                 # default: today
+    "priorities": ["Ship X", "Call Y", "Run 10k"],
+    "blocks": [
+      {"start": "07:00", "end": "08:30", "text": "Deep work"},
+      {"start": "9:30", "end": "10:00", "text": "Standup"}
+    ],
+    "notes": "Free-form brain dump text",
+    "mode": "replace"                     # or "merge"
+  }
+
+"replace" (default) clears the day's schedule before writing the blocks;
+"merge" only overwrites the slots the blocks cover. Priorities and notes
+replace what's there only when given. Times snap to 15 minutes (start rounds
+down, end rounds up); a half hour holding two different 15-minute blocks is
+split in the planner. If the schedule changes, the old one is kept as a
+snapshot in the day's "versions" (as the planner's Snapshot button does), and
+the previous file is copied to backups/ first.
+"""
+
+import json
+import os
+import re
+import shutil
+import sys
+import tempfile
+from datetime import date, datetime
+
+DATA_DIR = os.path.expanduser("~/.local/share/omarchy-timebox")
+BACKUP_DIR = os.path.join(DATA_DIR, "backups")
+PRIORITIES = 3
+
+
+def die(msg):
+    print(f"timebox-import: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def parse_time(value, round_up):
+    m = re.fullmatch(r"\s*(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?\s*", str(value), re.I)
+    if not m:
+        die(f"can't read time {value!r} (use 24-hour HH:MM)")
+    h, mins, ampm = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+    if ampm:
+        h = h % 12 + (12 if ampm.lower().startswith("p") else 0)
+    total = h * 60 + mins
+    if not 0 <= total <= 24 * 60:
+        die(f"time out of range: {value!r}")
+    return ((total + 14) // 15 * 15) if round_up else (total // 15 * 15)
+
+
+def slot_key(minutes):
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def expand(slot_map, split_keys):
+    """Stored map -> {quarter key: text}. An unsplit half hour's text covers both quarters."""
+    quarters = {}
+    splits = set(split_keys or [])
+    for half in range(48):
+        k0, k1 = slot_key(half * 30), slot_key(half * 30 + 15)
+        a = slot_map.get(k0) or ""
+        split = k0 in splits or k1 in slot_map
+        b = (slot_map.get(k1) or "") if split else a
+        if a:
+            quarters[k0] = a
+        if b:
+            quarters[k1] = b
+    return quarters
+
+
+def compress(quarters, keep_splits=()):
+    """{quarter key: text} -> (stored map, split half keys). Halves whose quarters differ are split."""
+    out, splits = {}, []
+    for half in range(48):
+        k0, k1 = slot_key(half * 30), slot_key(half * 30 + 15)
+        a, b = quarters.get(k0, ""), quarters.get(k1, "")
+        if a == b and k0 not in keep_splits:
+            if a:
+                out[k0] = a
+            continue
+        splits.append(k0)
+        if a:
+            out[k0] = a
+        if b:
+            out[k1] = b
+    return out, splits
+
+
+def day_path(key):
+    return os.path.join(DATA_DIR, f"{key}.json")
+
+
+def load_day(key):
+    path = day_path(key)
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        raw = f.read()
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        die(f"{path} isn't valid JSON; not touching it")
+    if not isinstance(data, dict):
+        die(f"{path} isn't a planner file; not touching it")
+    return data
+
+
+def show(key):
+    data = load_day(key)
+    slots = data.get("slots") or {}
+    print(f"Timebox {key}")
+    for i, p in enumerate(data.get("priorities") or [], 1):
+        if p.get("text"):
+            print(f"  P{i} {'[x]' if p.get('done') else '[ ]'} {p['text']}")
+    prev = None
+    for k in sorted(slots):
+        if slots[k] and slots[k] != prev:
+            print(f"  {k}  {slots[k]}")
+        prev = slots[k]
+    for i, v in enumerate(data.get("versions") or [], 1):
+        print(f"  v{i} snapshot at {str(v.get('at', '?'))[11:16]}{' (import)' if v.get('source') == 'import' else ''}")
+
+
+def main(argv):
+    dry = "--dry-run" in argv
+    args = [a for a in argv if a != "--dry-run"]
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__)
+        return
+    if args and args[0] == "--show":
+        show(args[1] if len(args) > 1 else date.today().isoformat())
+        return
+
+    raw = open(args[0]).read() if args else sys.stdin.read()
+    try:
+        plan = json.loads(raw)
+    except json.JSONDecodeError as e:
+        die(f"plan isn't valid JSON: {e}")
+    if not isinstance(plan, dict):
+        die("plan must be a JSON object")
+
+    key = str(plan.get("date") or date.today().isoformat())
+    try:
+        datetime.strptime(key, "%Y-%m-%d")
+    except ValueError:
+        die(f"bad date {key!r} (use YYYY-MM-DD)")
+
+    mode = plan.get("mode", "replace")
+    if mode not in ("replace", "merge"):
+        die("mode must be 'replace' or 'merge'")
+
+    blocks = plan.get("blocks")
+    if not isinstance(blocks, list):
+        die("plan needs a 'blocks' list")
+
+    day = load_day(key)
+    old_map = day.get("slots") or {}
+    old_splits = day.get("splits") if isinstance(day.get("splits"), list) else []
+    quarters = {} if mode == "replace" else expand(old_map, old_splits)
+    for b in blocks:
+        text = str(b.get("text", "")).strip()
+        if not text:
+            continue
+        start = parse_time(b.get("start"), round_up=False)
+        end = parse_time(b.get("end", b.get("start")), round_up=True)
+        if end <= start:
+            end = start + 15
+        for m in range(start, min(end, 24 * 60), 15):
+            quarters[slot_key(m)] = text
+    # Keep anything the planner stores outside the 15-minute keys.
+    extra = {k: v for k, v in old_map.items() if mode == "merge" and not re.fullmatch(r"\d\d:(00|15|30|45)", k)}
+    slots, splits = compress(quarters, set(old_splits) if mode == "merge" else set())
+    slots.update(extra)
+    # Newport-style: keep the plan being replaced as a version of the day.
+    old_slots = {k: v for k, v in (day.get("slots") or {}).items() if v}
+    if old_slots and old_slots != slots:
+        versions = day.get("versions") if isinstance(day.get("versions"), list) else []
+        last = versions[-1] if versions else None
+        if not last or last.get("slots") != old_slots:
+            entry = {"at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "slots": old_slots, "source": "import"}
+            if day.get("slotColors"):
+                entry["slotColors"] = day["slotColors"]
+            if old_splits:
+                entry["splits"] = old_splits
+            versions.append(entry)
+            day["versions"] = versions
+    day["date"] = key
+    day["slots"] = slots
+    if splits:
+        day["splits"] = splits
+    else:
+        day.pop("splits", None)
+    if mode == "replace":
+        # Colors belong to the old slots; drop them with the schedule.
+        day.pop("slotColors", None)
+
+    if "priorities" in plan:
+        items = []
+        for p in list(plan["priorities"])[:PRIORITIES]:
+            if isinstance(p, dict):
+                items.append({"text": str(p.get("text", "")), "done": bool(p.get("done"))})
+            else:
+                items.append({"text": str(p), "done": False})
+        while len(items) < PRIORITIES:
+            items.append({"text": "", "done": False})
+        day["priorities"] = items
+    day.setdefault("priorities", [{"text": "", "done": False} for _ in range(PRIORITIES)])
+
+    if "notes" in plan:
+        day["brainDump"] = str(plan["notes"])
+    day.setdefault("brainDump", "")
+
+    out = json.dumps(day, indent=2, ensure_ascii=False) + "\n"
+    if dry:
+        sys.stdout.write(out)
+        return
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    path = day_path(key)
+    if os.path.exists(path):
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        shutil.copy2(path, os.path.join(BACKUP_DIR, f"{key}.{stamp}.json"))
+    fd, tmp = tempfile.mkstemp(dir=DATA_DIR, prefix=f".{key}.", suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        f.write(out)
+    os.replace(tmp, path)
+    show(key)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

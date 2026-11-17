@@ -1,7 +1,7 @@
 # Timebox
 
 A daily timebox planner for the [Omarchy](https://omarchy.org) shell, modeled on the paper
-"Daily Timebox Planner": top priorities, a brain dump, and a half-hour schedule from 7 AM to midnight.
+"Daily Timebox Planner": top priorities, a brain dump, and a single-column half-hour schedule from 6 AM to 8 PM.
 It follows your current Omarchy theme, and everything you write appears in a handwriting font, like pen on the paper original.
 
 ![Timebox Planner](preview.png)
@@ -10,8 +10,12 @@ It follows your current Omarchy theme, and everything you write appears in a han
 - **Brain Dump**: free-form notes on a dotted pad, in two columns.
 - **Schedule**: `:00` / `:30` slots. Consecutive slots with the same text are drawn as one boxed timebox.
 - On today's page, the current hour's number is highlighted.
-- **Save image**: saves the day as a picture in `~/Pictures/timebox-<date>.png`; click the
-  notification to send it to your phone with LocalSend.
+- **Snapshots** (Newport-style revisions): before the first schedule change of a round of edits
+  (when the planner opens, or after ten quiet minutes), the planner keeps the plan as it was.
+  Press **Snapshot** (or Ctrl+S) to take one yourself anytime. Each snapshot is kept in the day's JSON under `versions`; the strip above the
+  schedule (`v1 · 9:05 AM`, `v2 · 11:40 AM`, `Now`) shows any version read-only, and
+  ‹ › or ←/→ step through them, and **Restore this version** brings one back (snapshotting the current plan first).
+  `timebox-import` snapshots the old plan automatically before replacing it.
 - **Text color**: the **A** button colors what you've selected with your theme's colors (Default, Red, or Accent): highlighted
   words in the Brain Dump, the priority you're in, or the selected schedule slots.
 - **Colors**: every color comes from your Omarchy theme and changes with it. The round button picks
@@ -74,7 +78,10 @@ Omarchy with the Quickshell-based shell (Omarchy 4 / Quattro). No other dependen
 | Type or Enter | Fill the selected slots (Esc cancels) |
 | Enter while typing | Save and move down one row, like a spreadsheet |
 | Del / Backspace | Clear the selected slots |
-| Arrows, Shift+arrows | Move / extend the selection |
+| ↑ / ↓, Shift+↑ / ↓ | Move / extend the selection |
+| ← / → | Older / newer snapshot of the day |
+| Ctrl+S | Take a snapshot |
+| Click a time label | Split that half hour into 15-minute rows (click again to merge) |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste slots (several lines paste into slots in order) |
 | Tab / Shift+Tab | Next / previous slot (saves what you're typing first) |
 | PgUp / PgDn | Previous / next day |
