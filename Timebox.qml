@@ -91,7 +91,6 @@ Item {
   readonly property int boxWidth: Math.max(2, Style.space(3))
 
   function open(payloadJson) {
-    root.lastScheduleEdit = 0
     root.now = new Date()
     root.setDay(new Date())
     if (!saveTimer.running) dayFile.reload()
@@ -139,9 +138,12 @@ Item {
     ])
   }
 
-  // Freeze the schedule as it stands, before you change it. auto = taken by
-  // the planner itself before a round of edits: quiet, and tagged as such.
-  function snapshot(auto) {
+  // Freeze the schedule as it stands. mode: undefined = you pressed Snapshot;
+  // "auto" = the planner keeping the plan before a revision (quiet, skipped when
+  // only names changed since the last version); "restore" = keeping the plan a
+  // Restore replaces (quiet).
+  function snapshot(mode) {
+    var auto = !!mode
     if (root.locked) return
     if (root.editing && !auto) root.commitEdit()
     if (root.slots.every(function(s) { return !s })) {
@@ -157,8 +159,10 @@ Item {
       if (!auto) root.notify("No changes since v" + list.length)
       return
     }
+    if (mode === "auto" && last
+        && Model.shapeOf(Model.slotsFromMap(last.slots, last.splits)) === Model.shapeOf(root.slots)) return
     var entry = { at: Qt.formatDateTime(new Date(), "yyyy-MM-ddTHH:mm:ss"), slots: map }
-    if (auto) entry.source = "auto"
+    if (auto) entry.source = mode
     var splitKeys = Model.splitList(root.splits)
     if (splitKeys.length) entry.splits = splitKeys
     if (Object.keys(colors).length) entry.slotColors = colors
@@ -171,17 +175,41 @@ Item {
     if (!auto) root.notify("Saved v" + list.length, "Snapshot at " + Model.shortTime(entry.at) + ". Edit away.")
   }
 
-  // Automatic snapshots: before the first schedule change of a round of edits,
-  // keep the plan as it was. A round starts when the planner opens or after
-  // ten quiet minutes, so tweaks don't pile up a version per keystroke.
-  readonly property int editRoundMs: 10 * 60 * 1000
+  // Automatic versions, Newport-style: a new version only when the plan's
+  // times change (a block added, removed, moved or resized; renames and colors
+  // don't count), only once the day has begun (planning before the first block
+  // starts, or for a future day, is free), and time changes within 45 minutes
+  // of each other (or of the last version) count as one revision.
+  readonly property int editRoundMs: 45 * 60 * 1000
   property real lastScheduleEdit: 0
 
-  function beforeScheduleChange() {
+  // Has the plan for this page started? Past days yes, future days no; today
+  // once the first block's start time has passed.
+  function dayBegun() {
+    var today = Qt.formatDate(new Date(), "yyyy-MM-dd")
+    if (root.dateKey !== today) return root.dateKey < today
+    var runs = Model.computeRuns(root.slots).runs
+    if (!runs.length) return false
+    var now = new Date()
+    return now.getHours() * 60 + now.getMinutes() >= Model.slotMinutes(runs[0].start)
+  }
+
+  function lastVersionMs() {
+    var v = root.versions.length ? root.versions[root.versions.length - 1] : null
+    var m = v ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(String(v.at)) : null
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : 0
+  }
+
+  // Call with the quarter slots an edit is about to write, before writing them.
+  function beforeScheduleChange(nextSlots) {
     if (root.locked || root.loading) return
+    if (Model.shapeOf(root.slots) === Model.shapeOf(nextSlots)) return
+    if (!root.dayBegun()) return
     var now = Date.now()
-    if (now - root.lastScheduleEdit > root.editRoundMs) root.snapshot(true)
+    var inRound = now - root.lastScheduleEdit < root.editRoundMs
+      || now - root.lastVersionMs() < root.editRoundMs
     root.lastScheduleEdit = now
+    if (!inRound) root.snapshot("auto")
   }
 
   // Step through versions: -1 = older, +1 = newer (past the newest is Now).
@@ -199,7 +227,7 @@ Item {
     if (!root.viewing) return
     var v = root.versions[root.viewVersion]
     root.viewVersion = -1
-    root.snapshot(true)
+    root.snapshot("restore")
     root.lastScheduleEdit = Date.now()
     root.slots = Model.slotsFromMap(v.slots, v.splits)
     root.splits = Model.splitsFromList(v.splits)
@@ -269,9 +297,9 @@ Item {
     var changed = false
     for (var c = root.selStart; c <= root.selEnd; c++) if (root.rowSlots[c] !== text) changed = true
     if (!changed) return
-    root.beforeScheduleChange()
     var next = root.slots.slice()
     root.setRows(next, root.selStart, root.selEnd, text)
+    root.beforeScheduleChange(next)
     root.slots = next
     if (!text) root.mergeEmptied(root.selStart, root.selEnd)
     root.scheduleSave()
@@ -359,8 +387,9 @@ Item {
     var keepQ = row.q
     var next = Object.assign({}, root.splits)
     if (next[k0]) {
-      var a = root.slots[2 * h], b = root.slots[2 * h + 1]
-      if (a && b && a !== b) root.beforeScheduleChange()
+      var merged = root.slots.slice()
+      merged[2 * h] = merged[2 * h + 1] = merged[2 * h] || merged[2 * h + 1]
+      root.beforeScheduleChange(merged)
       root.mergeHalf(h, next)
       keepQ = 2 * h
     } else {
@@ -424,7 +453,6 @@ Item {
 
   function cutSlots() {
     if (root.locked) return
-    root.beforeScheduleChange()
     root.copySlots()
     var next = Object.assign({}, root.slotColors)
     for (var i = root.selStart; i <= root.selEnd; i++) delete next[root.rows[i].key]
@@ -454,7 +482,7 @@ Item {
       root.anchorSlot = root.selStart
       root.cursorSlot = end
     }
-    root.beforeScheduleChange()
+    root.beforeScheduleChange(nextSlots)
     root.slots = nextSlots
     root.slotColors = nextColors
     root.scheduleSave()
@@ -1742,7 +1770,6 @@ Item {
       var runOf = root.runInfo.runOf, runs = root.runInfo.runs
       if (runOf[from] >= 0) from = runs[runOf[from]].start
       if (runOf[to] >= 0) to = runs[runOf[to]].start + runs[runOf[to]].len - 1
-      root.beforeScheduleChange()
       var next = Object.assign({}, root.slotColors)
       for (var i = from; i <= to; i++) {
         if (color) next[root.rows[i].key] = color

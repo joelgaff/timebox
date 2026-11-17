@@ -137,6 +137,21 @@ function computeRuns(slots) {
   return { runOf: runOf, runs: runs }
 }
 
+// The plan's shape: where blocks start and end, ignoring their names. Two
+// plans with the same shape differ only by renames.
+function shapeOf(slots) {
+  var out = []
+  var prev = ""
+  for (var i = 0; i < slots.length; i++) {
+    var filled = !!slots[i]
+    var boundary = filled && (i === 0 || slots[i] !== slots[i - 1])
+    if (boundary || (filled !== !!prev && i > 0)) out.push(i + (filled ? "+" : "-"))
+    prev = slots[i]
+  }
+  if (prev) out.push(slots.length + "-")
+  return out.join(",")
+}
+
 function slotMinutes(i) {
   return START_HOUR * 60 + i * 15
 }
