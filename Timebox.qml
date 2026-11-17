@@ -47,6 +47,10 @@ Item {
   property bool loading: false
   property int revision: 0
   property string lastWritten: ""
+  // The notes as last loaded or saved (stored form), so a save that wipes
+  // most of a note can keep the old text as a version first.
+  property string savedNotes: ""
+  property string savedNotes2: ""
   property bool watchReload: false
   property bool fileExists: false
   // Plugin preferences (reminder mode), shared with the reminder service.
@@ -140,6 +144,21 @@ Item {
     ])
   }
 
+  // Notes in the stored form (theme colors as names), or "" when empty.
+  function storedNotes(which) {
+    var edit = which === 2 ? dumpEdit2 : dumpEdit
+    if (!edit.length) return ""
+    return Model.colorsToTones(Model.cleanRichText(which === 2 ? root.brainDump2 : root.brainDump), root.tonePairs())
+  }
+
+  function displayNotes(stored) {
+    return Model.tonesToColors(Model.isRichText(stored) ? stored : Model.plainToHtml(stored), root.tone)
+  }
+
+  function versionHasNotes(v) {
+    return !!v && (v.notes !== undefined || v.notes2 !== undefined)
+  }
+
   // Freeze the schedule as it stands. mode: undefined = you pressed Snapshot;
   // "auto" = the planner keeping the plan before a revision (quiet, skipped when
   // only names changed since the last version); "restore" = keeping the plan a
@@ -148,8 +167,9 @@ Item {
     var auto = !!mode
     if (root.locked) return
     if (root.editing && !auto) root.commitEdit()
-    if (root.slots.every(function(s) { return !s })) {
-      if (!auto) root.notify("Nothing to snapshot", "The schedule is empty.")
+    var notes = root.storedNotes(1), notes2 = root.storedNotes(2)
+    if (root.slots.every(function(s) { return !s }) && !notes && !notes2) {
+      if (!auto) root.notify("Nothing to snapshot", "The schedule and notes are empty.")
       return
     }
     var map = Model.slotsToMap(root.slots, root.otherSlots, root.splits)
@@ -157,7 +177,8 @@ Item {
     var list = root.versions.slice()
     var last = list.length ? list[list.length - 1] : null
     if (last && JSON.stringify(last.slots) === JSON.stringify(map)
-        && JSON.stringify(last.slotColors || {}) === JSON.stringify(colors)) {
+        && JSON.stringify(last.slotColors || {}) === JSON.stringify(colors)
+        && (last.notes || "") === notes && (last.notes2 || "") === notes2) {
       if (!auto) root.notify("No changes since v" + list.length)
       return
     }
@@ -168,6 +189,8 @@ Item {
     var splitKeys = Model.splitList(root.splits)
     if (splitKeys.length) entry.splits = splitKeys
     if (Object.keys(colors).length) entry.slotColors = colors
+    entry.notes = notes
+    entry.notes2 = notes2
     list.push(entry)
     var extra = Object.assign({}, root.extraFields)
     extra.versions = list
@@ -219,6 +242,8 @@ Item {
     var n = root.versions.length
     if (!n) return
     if (root.editing) root.commitEdit()
+    // Save pending typing now: saves are blocked while a version is shown.
+    if (!root.viewing) root.flush()
     var cur = root.viewing ? root.viewVersion : n
     var next = Math.max(0, Math.min(n, cur + delta))
     root.viewVersion = next === n ? -1 : next
@@ -231,12 +256,21 @@ Item {
     root.viewVersion = -1
     root.snapshot("restore")
     root.lastScheduleEdit = Date.now()
+    root.loading = true
     root.slots = Model.slotsFromMap(v.slots, v.splits)
     root.splits = Model.splitsFromList(v.splits)
     root.slotColors = JSON.parse(JSON.stringify(v.slotColors || {}))
+    // Versions from before notes were kept leave the notes alone.
+    if (root.versionHasNotes(v)) {
+      root.brainDump = root.displayNotes(v.notes || "")
+      root.brainDump2 = root.displayNotes(v.notes2 || "")
+      root.revision++
+    }
+    root.loading = false
     saveTimer.stop()
     root.save()
   }
+
 
   function shiftDay(delta) {
     root.setDay(new Date(root.day.getFullYear(), root.day.getMonth(), root.day.getDate() + delta))
@@ -257,6 +291,8 @@ Item {
     root.splits = d.splits
     root.otherSlots = d.otherSlots
     root.extraFields = d.extra
+    root.savedNotes = d.brainDump || ""
+    root.savedNotes2 = d.brainDump2 || ""
     root.revision++
     root.loading = false
   }
@@ -273,10 +309,29 @@ Item {
 
   function save() {
     if (root.locked) return
+    var notes = root.storedNotes(1), notes2 = root.storedNotes(2)
+    // Wiping most of a note? Keep the old notes as a version first, so they
+    // can be brought back from the version strip.
+    if (Model.notesShrank(root.savedNotes, notes) || Model.notesShrank(root.savedNotes2, notes2)) {
+      var list = root.versions.slice()
+      var last = list.length ? list[list.length - 1] : null
+      if (!last || (last.notes || "") !== root.savedNotes || (last.notes2 || "") !== root.savedNotes2) {
+        var entry = { at: Qt.formatDateTime(new Date(), "yyyy-MM-ddTHH:mm:ss"), source: "notes",
+          slots: Model.slotsToMap(root.slots, root.otherSlots, root.splits),
+          notes: root.savedNotes, notes2: root.savedNotes2 }
+        var splitKeys = Model.splitList(root.splits)
+        if (splitKeys.length) entry.splits = splitKeys
+        if (Object.keys(root.slotColors || {}).length) entry.slotColors = JSON.parse(JSON.stringify(root.slotColors))
+        list.push(entry)
+        var extra = Object.assign({}, root.extraFields)
+        extra.versions = list
+        root.extraFields = extra
+        root.notify("Old notes kept in v" + list.length, "Use ‹ › to see them, then Restore if that wasn't meant.")
+      }
+    }
     var d = {
       slots: root.slots, priorities: root.priorities,
-      brainDump: dumpEdit.length ? Model.colorsToTones(Model.cleanRichText(root.brainDump), root.tonePairs()) : "",
-      brainDump2: dumpEdit2.length ? Model.colorsToTones(Model.cleanRichText(root.brainDump2), root.tonePairs()) : "",
+      brainDump: notes, brainDump2: notes2,
       slotColors: root.slotColors, otherSlots: root.otherSlots, splits: root.splits, extra: root.extraFields
     }
     var empty = !d.brainDump && !d.brainDump2 && root.slots.every(function(s) { return !s })
@@ -285,6 +340,8 @@ Item {
     var out = Model.serializeDay(root.dateKey, d)
     root.lastWritten = root.dateKey + "\n" + out
     dayFile.setText(out)
+    root.savedNotes = notes
+    root.savedNotes2 = notes2
     root.fileExists = true
   }
 
@@ -1086,6 +1143,14 @@ Item {
                 Connections {
                   target: root
                   function onRevisionChanged() { dumpEdit.text = root.brainDump }
+                  // Browsing versions shows that version's notes (read-only).
+                  function onViewVersionChanged() {
+                    var v = root.viewing ? root.versions[root.viewVersion] : null
+                    var was = root.loading
+                    root.loading = true
+                    dumpEdit.text = root.versionHasNotes(v) ? root.displayNotes(v.notes || "") : root.brainDump
+                    root.loading = was
+                  }
                 }
               }
             }
@@ -1147,6 +1212,14 @@ Item {
                 Connections {
                   target: root
                   function onRevisionChanged() { dumpEdit2.text = root.brainDump2 }
+                  // Browsing versions shows that version's notes (read-only).
+                  function onViewVersionChanged() {
+                    var v = root.viewing ? root.versions[root.viewVersion] : null
+                    var was = root.loading
+                    root.loading = true
+                    dumpEdit2.text = root.versionHasNotes(v) ? root.displayNotes(v.notes2 || "") : root.brainDump2
+                    root.loading = was
+                  }
                 }
               }
             }
@@ -1255,6 +1328,7 @@ Item {
                       id: chipText
                       anchors.centerIn: parent
                       text: chip.ver < 0 ? "Now" : "v" + (chip.ver + 1) + " · " + Model.shortTime(root.versions[chip.ver].at)
+                        + (root.versions[chip.ver].source === "notes" ? " · notes" : "")
                       color: chip.active ? root.accent : root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.bodySmall
@@ -1265,7 +1339,7 @@ Item {
                       anchors.fill: parent
                       hoverEnabled: true
                       cursorShape: Qt.PointingHandCursor
-                      onClicked: { if (root.editing) root.commitEdit(); root.viewVersion = chip.ver; gridKeys.forceActiveFocus() }
+                      onClicked: { if (root.editing) root.commitEdit(); if (!root.viewing) root.flush(); root.viewVersion = chip.ver; gridKeys.forceActiveFocus() }
                     }
                   }
                 }

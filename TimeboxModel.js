@@ -108,6 +108,24 @@ function plainToHtml(text) {
   return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")
 }
 
+// How much is written in a note (stored or display form): characters other
+// than whitespace, ignoring markup.
+function notesLength(text) {
+  var t = String(text || "")
+  if (isRichText(t)) {
+    t = t.replace(/<head[\s\S]*?<\/head>/i, "").replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/g, " ").replace(/&[a-z#0-9]+;/gi, "x")
+  }
+  return t.replace(/\s+/g, "").length
+}
+
+// A save that wipes most of a note: at least 20 characters lost and less
+// than half left.
+function notesShrank(before, after) {
+  var a = notesLength(before), b = notesLength(after)
+  return a >= 20 && a - b >= 20 && b < a / 2
+}
+
 // Keep only colors from Qt's generated HTML, so the stored note follows the
 // planner's current font and size instead of freezing the ones in use today.
 function cleanRichText(html) {

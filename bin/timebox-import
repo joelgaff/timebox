@@ -22,7 +22,8 @@ Plan format (every field but "blocks" is optional):
 replace what's there only when given. Times snap to 15 minutes (start rounds
 down, end rounds up); a half hour holding two different 15-minute blocks is
 split in the planner. If the schedule changes, the old one is kept as a
-snapshot in the day's "versions" (as the planner's Snapshot button does), and
+snapshot in the day's "versions" (as the planner's Snapshot button does; the
+notes go with it, and replacing the notes alone also keeps a snapshot), and
 the previous file is copied to backups/ first.
 """
 
@@ -184,11 +185,14 @@ def main(argv):
     slots.update(extra)
     # Newport-style: keep the plan being replaced as a version of the day.
     old_slots = {k: v for k, v in (day.get("slots") or {}).items() if v}
-    if old_slots and old_slots != slots:
+    old_notes, old_notes2 = day.get("brainDump") or "", day.get("brainDump2") or ""
+    notes_replaced = "notes" in plan and old_notes and str(plan["notes"]) != old_notes
+    if (old_slots and old_slots != slots) or notes_replaced:
         versions = day.get("versions") if isinstance(day.get("versions"), list) else []
         last = versions[-1] if versions else None
-        if not last or last.get("slots") != old_slots:
-            entry = {"at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "slots": old_slots, "source": "import"}
+        if not last or last.get("slots") != old_slots or (last.get("notes") or "") != old_notes:
+            entry = {"at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "slots": old_slots, "source": "import",
+                     "notes": old_notes, "notes2": old_notes2}
             if day.get("slotColors"):
                 entry["slotColors"] = day["slotColors"]
             if old_splits:
