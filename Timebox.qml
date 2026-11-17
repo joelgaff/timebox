@@ -46,6 +46,8 @@ Item {
   property bool inkOpen: false
   property bool loading: false
   property int revision: 0
+  property string lastWritten: ""
+  property bool watchReload: false
   property bool fileExists: false
   // Plugin preferences (reminder mode), shared with the reminder service.
   property var settings: ({})
@@ -280,7 +282,9 @@ Item {
     var empty = !d.brainDump && !d.brainDump2 && root.slots.every(function(s) { return !s })
       && root.priorities.every(function(p) { return !p.text })
     if (empty && !root.fileExists) return
-    dayFile.setText(Model.serializeDay(root.dateKey, d))
+    var out = Model.serializeDay(root.dateKey, d)
+    root.lastWritten = root.dateKey + "\n" + out
+    dayFile.setText(out)
     root.fileExists = true
   }
 
@@ -550,9 +554,18 @@ Item {
     printErrors: false
     // Pick up days written from outside (timebox-import), unless an edit is pending.
     watchChanges: true
-    onFileChanged: if (!saveTimer.running && !root.editing) reload()
-    onLoaded: { root.fileExists = true; root.loadError = ""; root.applyData(text()) }
+    // Our own saves also fire this; they're skipped in onLoaded so typing in
+    // the notes doesn't get reloaded (which reset the cursor to the top).
+    onFileChanged: if (!saveTimer.running && !root.editing) { root.watchReload = true; reload() }
+    onLoaded: {
+      var fromWatch = root.watchReload
+      root.watchReload = false
+      root.fileExists = true; root.loadError = ""
+      if (fromWatch && root.dateKey + "\n" + text() === root.lastWritten) return
+      root.applyData(text())
+    }
     onLoadFailed: function(error) {
+      root.watchReload = false
       root.fileExists = error !== FileViewError.FileNotFound
       root.loadError = root.fileExists ? "Couldn't read " + root.dateKey + ".json" : ""
       root.applyData("")
