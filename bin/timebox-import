@@ -3,6 +3,8 @@
 
 Usage:
   timebox-import [--dry-run] [FILE]      # reads stdin when FILE is omitted
+  (With the Beelink server set up in ~/.config/timebox/config.json, the plan is sent
+  there; --dry-run always works on this machine's copy.)
   timebox-import --show [YYYY-MM-DD]     # print a day's schedule
 
 Plan format (every field but "blocks" is optional):
@@ -117,8 +119,8 @@ def load_day(key):
     return data
 
 
-def show(key):
-    data = load_day(key)
+def show(key, data=None):
+    data = load_day(key) if data is None else data
     slots = data.get("slots") or {}
     print(f"Timebox {key}")
     for i, p in enumerate(data.get("priorities") or [], 1):
@@ -133,6 +135,40 @@ def show(key):
         print(f"  v{i} snapshot at {str(v.get('at', '?'))[11:16]}{' (import)' if v.get('source') == 'import' else ''}")
 
 
+CONFIG = os.path.expanduser("~/.config/timebox/config.json")
+TOKEN = os.path.expanduser("~/.config/timebox/token")
+
+
+def configured_server():
+    """The Timebox server (Beelink) URL from ~/.config/timebox/config.json, if any."""
+    try:
+        with open(CONFIG) as f:
+            return str(json.load(f).get("server") or "").rstrip("/")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def send_to_server(server, raw):
+    """With the server configured, the Beelink holds the days: send the plan there."""
+    import urllib.error
+    import urllib.request
+    with open(TOKEN) as f:
+        token = f.read().strip()
+    req = urllib.request.Request(server + "/api/plans", data=raw.encode(), method="POST",
+                                 headers={"Authorization": "Bearer " + token,
+                                          "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            print(json.load(resp)["summary"])
+    except urllib.error.HTTPError as e:
+        try:
+            die(json.load(e).get("error", str(e)))
+        except ValueError:
+            die(str(e))
+    except (urllib.error.URLError, OSError) as e:
+        die(f"can't reach {server}: {e}")
+
+
 def main(argv):
     dry = "--dry-run" in argv
     args = [a for a in argv if a != "--dry-run"]
@@ -140,10 +176,22 @@ def main(argv):
         print(__doc__)
         return
     if args and args[0] == "--show":
-        show(args[1] if len(args) > 1 else date.today().isoformat())
+        key = args[1] if len(args) > 1 else date.today().isoformat()
+        server = configured_server()
+        if server:
+            import urllib.request
+            with urllib.request.urlopen(f"{server}/api/days/{key}", timeout=20) as resp:
+                day = json.load(resp)
+            show(key, day)
+        else:
+            show(key)
         return
 
     raw = open(args[0]).read() if args else sys.stdin.read()
+    server = configured_server()
+    if server and not dry:
+        send_to_server(server, raw)
+        return
     try:
         plan = json.loads(raw)
     except json.JSONDecodeError as e:

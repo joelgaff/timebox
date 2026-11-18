@@ -1,4 +1,4 @@
-# Timebox: put my day plan on my Framework
+# Timebox: put my day plan in my Timebox planner
 
 Use this whenever I send a voice memo or note about my day (what I need to get
 done, meetings, workouts, errands) or ask you to plan or re-plan a day.
@@ -7,11 +7,14 @@ done, meetings, workouts, errands) or ask you to plan or re-plan a day.
    start and end times, my top three priorities, and any loose notes or
    reminders that don't belong in a time slot.
 2. Show me the schedule in chat as usual.
-3. Then put it in my Timebox planner by running this on my Framework 13
-   (local command), with the plan as JSON:
+3. Then send it to my Timebox server (my Beelink, on my Tailscale network) by
+   running this from your own machine, with the plan as JSON:
 
    ```bash
-   ~/.local/bin/timebox-import <<'JSON'
+   curl -sS --max-time 20 https://beelink.tailaa12cd.ts.net:4590/api/plans \
+     -H "Authorization: Bearer <GROKBOT_KEY>" \
+     -H "Content-Type: application/json" \
+     --data-binary @- <<'JSON'
    {
      "date": "YYYY-MM-DD",
      "priorities": ["First", "Second", "Third"],
@@ -25,6 +28,9 @@ done, meetings, workouts, errands) or ask you to plan or re-plan a day.
    JSON
    ```
 
+   The reply is JSON: `"ok": true` and a `"summary"` of the saved schedule, or
+   an `"error"` saying what was wrong with the plan (fix it and send again).
+
 Rules:
 - Times are 24-hour HH:MM in Pacific time, on :00, :15, :30 or :45. Use the
   real times (e.g. lunch 12:00 to 12:45); a half hour holding two different
@@ -36,9 +42,13 @@ Rules:
   few things ("add a call at 3"), use "merge" with just those blocks.
 - At most three priorities. Leave out "priorities" or "notes" to keep what's
   already in the planner.
-- The command prints the saved schedule. Tell me in one line that it's in
-  Timebox. If it fails (laptop asleep or offline), say so and keep the plan in
-  chat so I can retry with "push it to Timebox".
-- Before replacing a plan, the old one is saved automatically as a snapshot
-  (a "version" of the day), so re-planning is safe.
-- To read back what's in the planner: `~/.local/bin/timebox-import --show YYYY-MM-DD`.
+- When it's saved, tell me in one line that it's in Timebox. If you can't
+  reach the server (your machine isn't on my Tailscale network, or the Beelink
+  is down), say so and keep the plan in chat so I can retry with "push it to
+  Timebox".
+- Before replacing a plan, the old one (and its notes) is saved automatically
+  as a version of the day, so re-planning is safe.
+- To read back what's in the planner:
+  `curl -sS https://beelink.tailaa12cd.ts.net:4590/api/days/YYYY-MM-DD`
+  (the day as JSON: "slots" maps "HH:MM" to block text).
+- Keep the key in this skill private: don't repeat it in chat.

@@ -6,7 +6,9 @@ It follows your current Omarchy theme, and everything you write appears in a han
 
 This is a fork of [HawzhinOmer/timebox](https://github.com/HawzhinOmer/timebox). It changes the
 schedule to one column with optional 15-minute rows, adds Cal Newport-style versions of the day
-and a "now" line, and adds `timebox-import` so an assistant (or a script) can fill in a day.
+and a "now" line, adds `timebox-import` so an assistant (or a script) can fill in a day, and
+adds an optional server (for an always-on machine on your Tailscale network) that holds your
+days, takes plans from Grok Bot, and serves a read-only phone view.
 
 ![Timebox Planner](preview.png)
 
@@ -70,13 +72,59 @@ JSON
   `~/.local/share/omarchy-timebox/backups/`.
 - `timebox-import --show [YYYY-MM-DD]` prints a day; `--dry-run` prints the result without saving.
 
-An open planner reloads when its file changes, so imports show up right away.
+An open planner reloads when its file changes, so imports show up right away. With the
+server set up, `timebox-import` sends the plan to the server instead (`--dry-run` still works
+locally), and `--show` reads from it.
 
 ### Grok Bot
 
-`grokbot/SKILL.md` is a skill for Grok Bot (or any assistant that can run commands on this
-machine): send it a voice memo or note about your day and it shows you the plan, then runs
-`timebox-import` to put it in the planner. Paste it in as a new skill.
+`grokbot/SKILL.md` is a skill for Grok Bot: send it a voice memo or note about your day and it
+shows you the plan, then sends it to the server with `curl` from its own machine (which is on
+the Tailscale network), so it works while the laptop sleeps. Paste it in as a new skill with
+`<GROKBOT_KEY>` replaced by the server's `grokbot` key; `~/.config/timebox/grokbot-skill.md` on
+the laptop is a ready-filled copy (keep it private).
+
+## Server and phone view (Beelink)
+
+`server/` is a small Ruby + Sinatra app that holds the only real copy of every day. It runs on
+an always-on machine (the Beelink) and is reachable only on the Tailscale network:
+
+```
+Grok Bot ──plan──►  Beelink: server/ + day files + backups  ◄── phone (read-only page)
+                         ▲  load / save (polls every 5 s)
+                         └── laptop: this plugin, with a local copy for offline reading
+```
+
+- **API**: `GET/PUT /api/days/YYYY-MM-DD` (saves need the current `ETag` in `If-Match`, so a
+  stale save can't overwrite a newer day), `POST /api/plans` (same plan format as
+  `timebox-import`), `GET/PUT /api/view` (the desktop's look), `/health`, and `/` (phone page).
+- **Keys**: reading is open to the tailnet; writing needs a key from
+  `~/.config/timebox-server/tokens.json` on the server: `laptop` (days, look, fonts, plans) and
+  `grokbot` (plans only).
+- **Pinned**: Ruby in `server/mise.toml` (run through `server/bin/ruby`, so system updates can't
+  change it) and gems in `Gemfile.lock`. Update on purpose: bump, `bundle install`, run the
+  tests, deploy.
+- **Tests**: `cd server && bin/ruby -S bundle exec rake` (server) and `node --test tests/`
+  (planner and phone JS). Tests come first.
+- **Deploy**: `server/bin/deploy` copies the code to `~/apps/timebox-server` on the Beelink,
+  installs Ruby and gems, runs the tests there, installs the `timebox-server` systemd user
+  service and restarts it. Data lives in `~/.local/share/timebox-server/` (day files as below,
+  plus `backups/`, at most one per day file every 10 minutes and always before an import).
+- **Tailscale**: `tailscale serve --bg --https=4590 http://127.0.0.1:4590` publishes it at
+  `https://beelink.tailaa12cd.ts.net:4590`, tailnet-only (never Funnel).
+
+**Laptop**: `~/.config/timebox/config.json` (`{"server": "https://beelink.tailaa12cd.ts.net:4590"}`)
+and the `laptop` key in `~/.config/timebox/token` switch the plugin to the server. The planner
+loads and saves days there; if a save finds the day changed (an import landed), the planner shows
+the new version and keeps your edit as a `conflict` version. Without the server it shows the last
+copy read-only, marked offline, and retries a save it couldn't make. The reminder service keeps
+today's copy in `~/.local/share/omarchy-timebox/` fresh every minute for the bar and reminders,
+and sends the desktop's look to the server. Delete `config.json` to go back to local files.
+
+**Phone**: open `https://beelink.tailaa12cd.ts.net:4590` in Safari with Tailscale on, then Share →
+Add to Home Screen. It shows the latest plan: the date with ‹ › (tap the date for today), a jump
+bar (Schedule · Priorities · Notes), the schedule opened at the current time, then the top
+priorities and the brain dump. It refreshes every 15 seconds while on screen.
 
 ## Web and Android
 
@@ -163,17 +211,37 @@ Set these on the widget's entry in `~/.config/omarchy/shell.json`, e.g.
 | `maxLength` | `28` | Longest block name before it's shortened with `…` |
 | `showNext` | `true` | Show the next block when nothing is scheduled right now |
 
+## Desktop and phone views
+
+The planner has two views of the same days: this plugin on the Omarchy desktop, and the
+read-only phone page (`server/public/`). They must look the same, with the phone using one
+column: a date bar and jump bar, the schedule (opened at the current time), then the top
+priorities, then the brain dump. The phone shows only the latest plan, no versions.
+
+**Any visual change updates both views, in the same commit.** That covers colors, fonts, sizes,
+spacing, lines, boxes, the now line and anything new on screen that both views show.
+
+- Sizes, spacing and other look values belong in `TimeboxLook.js`, which the plugin imports and
+  the phone gets through the view profile, not hard-coded in one view. Schedule layout math for
+  the phone is in `server/public/phone-view.js` (tested in `tests/phone-view.test.js`).
+- Colors and fonts always come from the current Omarchy theme. The reminder service sends them
+  (and the Omarchy sizes) to the server as the view profile; `bin/timebox-publish-fonts` uploads
+  the font files.
+- When a change can only be made in one view (a desktop-only key, say), note why in the commit.
+
 ## Data
 
-Each day is saved automatically as JSON in `~/.local/share/omarchy-timebox/YYYY-MM-DD.json`;
+Each day is saved automatically as JSON in `~/.local/share/omarchy-timebox/YYYY-MM-DD.json`
+(with the server, that's the laptop's copy; the real one is the same file on the server);
 the reminder setting lives in `settings.json` in the same folder.
 
 - `slots`: `"HH:MM": "text"`. A half hour is one key (`"09:00"`) covering both of its quarters
   unless it's split, in which case its `:15` / `:45` key holds the second quarter.
 - `splits`: the half hours shown as two 15-minute rows (`["12:30"]`).
 - `versions`: earlier versions of the day, each with `at` (when it was kept), its `slots`,
-  `splits` and colors, and a `source` (`auto`, `import` or `restore`; none when you pressed
-  Snapshot).
+  `splits` and colors, the two notes boxes (`notes`, `notes2`), and a `source` (`auto`,
+  `import`, `restore`, `notes` when a save would have wiped most of a note, or `conflict` for
+  an edit that lost a race with an import; none when you pressed Snapshot).
 
 Days saved before this format load unchanged; entries outside 6 AM to 8 PM are kept but not shown.
 If a day's file can't be read or isn't valid JSON, the planner opens it read-only with a warning
