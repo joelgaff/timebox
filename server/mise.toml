@@ -1,0 +1,4 @@
+# Pinned so system Ruby updates can't break the server. Update on purpose:
+# change this, `mise install`, `bundle install`, run the tests, restart.
+[tools]
+ruby = "3.4.5"

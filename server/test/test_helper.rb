@@ -1,0 +1,5 @@
+ENV["APP_ENV"] = "test"
+require "minitest/autorun"
+require "tmpdir"
+require "json"
+require_relative "../lib/timebox/app"

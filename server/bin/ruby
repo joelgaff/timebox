@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Run the pinned Ruby from mise.toml by its full path, so neither PATH order nor
+# a system Ruby update can swap it out.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ruby_dir=$(mise where ruby)
+export PATH="$ruby_dir/bin:$PATH"
+exec "$ruby_dir/bin/ruby" "$@"
