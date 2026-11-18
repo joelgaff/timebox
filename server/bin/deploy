@@ -21,10 +21,18 @@ bin/ruby -S bundle config set --local deployment true
 bin/ruby -S bundle install --quiet
 bin/ruby -S bundle exec rake 2>&1 | grep -v "warning: literal" | tail -1
 mkdir -p ~/.config/systemd/user ~/.config/timebox-server ~/.local/share/timebox-server
-install -m 644 timebox-server.service ~/.config/systemd/user/
+install -m 644 timebox-server.service timebox-public.service timebox-tunnel.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --quiet timebox-server
 systemctl --user restart timebox-server
+# The public door (timebox.joelgaff.com) runs once its Access and tunnel settings exist.
+if [ -s ~/.config/timebox-server/public.env ]; then
+  systemctl --user enable --quiet timebox-public
+  systemctl --user restart timebox-public
+fi
+if [ -s ~/.config/timebox-server/tunnel.env ]; then
+  systemctl --user enable --quiet --now timebox-tunnel
+fi
 sleep 2
 curl -sf localhost:4590/health && echo " server up"
 REMOTE

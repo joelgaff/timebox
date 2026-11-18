@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare Tunnel for timebox.joelgaff.com (to the public door on :4592)
+After=network-online.target docker.service
+
+[Service]
+# TUNNEL_TOKEN from the Cloudflare dashboard (Zero Trust > Networks > Tunnels > timebox).
+EnvironmentFile=%h/.config/timebox-server/tunnel.env
+ExecStartPre=-/usr/bin/docker rm -f timebox-tunnel
+ExecStart=/usr/bin/docker run --rm --name timebox-tunnel --network host \
+  -e TUNNEL_TOKEN cloudflare/cloudflared:2026.11.1 tunnel --no-autoupdate run
+ExecStop=/usr/bin/docker stop timebox-tunnel
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

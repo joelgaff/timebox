@@ -1,0 +1,20 @@
+[Unit]
+Description=Timebox public door (read-only, behind Cloudflare Access + Tunnel)
+After=network-online.target timebox-server.service
+
+[Service]
+WorkingDirectory=%h/apps/timebox-server
+Environment=TIMEBOX_DATA=%h/.local/share/timebox-server
+Environment=TIMEBOX_TOKENS=/dev/null
+Environment=TIMEBOX_PORT=4592
+Environment=APP_ENV=production
+# TIMEBOX_ACCESS_TEAM (https://<team>.cloudflareaccess.com) and TIMEBOX_ACCESS_AUD
+# (the Access application's AUD tag). Without them the service refuses to start.
+EnvironmentFile=%h/.config/timebox-server/public.env
+ExecStartPre=/usr/bin/test -n "${TIMEBOX_ACCESS_TEAM}" -a -n "${TIMEBOX_ACCESS_AUD}"
+ExecStart=%h/apps/timebox-server/bin/ruby -S bundle exec bin/timebox-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
