@@ -42,7 +42,8 @@ Rules:
   few things ("add a call at 3"), use "merge" with just those blocks.
 - At most three priorities. Leave out "priorities" or "notes" to keep what's
   already in the planner.
-- When it's saved, tell me in one line that it's in Timebox. If you can't
+- When it's saved, tell me in one line that it's in Timebox, with the link
+  https://timebox.joelgaff.com (my phone view). If you can't
   reach the server (your machine isn't on my Tailscale network, or the Beelink
   is down), say so and keep the plan in chat so I can retry with "push it to
   Timebox".
@@ -51,4 +52,7 @@ Rules:
 - To read back what's in the planner:
   `curl -sS https://beelink.tailaa12cd.ts.net:4590/api/days/YYYY-MM-DD`
   (the day as JSON: "slots" maps "HH:MM" to block text).
+- Always send plans to the beelink.tailaa12cd.ts.net:4590 address above.
+  timebox.joelgaff.com is my read-only phone view behind a sign-in; it won't
+  accept plans.
 - Keep the key in this skill private: don't repeat it in chat.
