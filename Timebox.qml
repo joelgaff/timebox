@@ -4,6 +4,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "TimeboxModel.js" as Model
+import "TimeboxServer.js" as Server
 
 Item {
   id: root
@@ -59,7 +60,25 @@ Item {
   // Set when today's file exists but can't be read or parsed. Editing is
   // blocked so a save can never overwrite data we failed to load.
   property string loadError: ""
-  readonly property bool locked: loadError !== "" || viewing
+  readonly property bool locked: loadError !== "" || viewing || offline
+
+  // The Beelink server (see TimeboxServer.js): when configured, days load from and save
+  // to it, and dataDir holds a local copy for the menu bar, reminders and offline reading.
+  property string configDir: Quickshell.env("HOME") + "/.config/timebox"
+  readonly property string serverUrl: Server.parseConfig(root.configText).server
+  readonly property bool serverMode: root.serverUrl !== ""
+  property string configText: ""
+  property string token: ""
+  property string etag: ""            // version of this day on the server ("none" = no file yet)
+  property string etagKey: ""         // the day that etag belongs to
+  property bool offline: false        // server unreachable: show the local copy, read-only
+  property string pendingText: ""     // a save the server hasn't taken yet...
+  property string pendingKey: ""      // ...for this day...
+  property string pendingBase: ""     // ...made on top of this version
+  property bool fetching: false
+  property bool putting: false
+  property string queuedText: ""      // a newer save waiting for the one in flight
+  property string queuedKey: ""
   readonly property var runInfo: Model.computeRuns(root.rowSlots)
 
   // Schedule selection (slot indexes) and inline editor
@@ -101,6 +120,7 @@ Item {
     root.setDay(new Date())
     if (!saveTimer.running) dayFile.reload()
     root.opened = true
+    root.fetchDay()
     var slot = root.currentSlot()
     root.cursorSlot = slot
     root.anchorSlot = slot
@@ -135,6 +155,8 @@ Item {
     root.viewVersion = -1
     root.lastScheduleEdit = 0
     root.day = next
+    root.offline = false
+    root.fetchDay()
   }
 
   function notify(title, body) {
@@ -297,6 +319,111 @@ Item {
     root.loading = false
   }
 
+  function writeLocal(out) {
+    root.lastWritten = root.dateKey + "\n" + out
+    dayFile.setText(out)
+  }
+
+  function nowStamp() { return Qt.formatDateTime(new Date(), "yyyy-MM-ddTHH:mm:ss") }
+
+  // Load the day from the server; also how the planner notices Grok Bot imports.
+  function fetchDay() {
+    if (!root.serverMode || root.fetching) return
+    var key = root.dateKey
+    root.fetching = true
+    Server.request("GET", Server.dayUrl(root.serverUrl, key),
+      { ifNoneMatch: root.etagKey === key ? root.etag : "" },
+      function(status, body, tag, exists) {
+        root.fetching = false
+        if (key !== root.dateKey) return
+        if (status === 304) { root.offline = root.pendingText !== ""; return }
+        if (status !== 200) { root.goOffline(); return }
+        // Mid-edit: leave it; the save that follows sees the change and keeps both.
+        if (saveTimer.running || root.editing || root.putting || root.pendingText !== "") return
+        root.offline = false
+        root.etag = tag
+        root.etagKey = key
+        root.fileExists = exists
+        root.loadError = ""
+        if (root.dateKey + "\n" + body === root.lastWritten) return
+        root.applyData(exists ? body : "")
+        if (exists) root.writeLocal(body)
+      })
+  }
+
+  function goOffline() {
+    if (!root.offline && root.opened)
+      root.notify("Timebox is offline", "Can't reach the Beelink. Showing this laptop's copy, read-only.")
+    root.offline = true
+  }
+
+  // Save to the server. A stale save (the day changed there, e.g. a Grok Bot import)
+  // keeps the server's day and adds what we were saving as a "conflict" version.
+  function putDay(key, out, base) {
+    // One save at a time: a second one sent with the same base would look stale.
+    if (root.putting) { root.queuedText = out; root.queuedKey = key; return }
+    root.putting = true
+    Server.request("PUT", Server.dayUrl(root.serverUrl, key),
+      { token: root.token, ifMatch: base, body: out, contentType: "application/json" },
+      function(status, body, tag) {
+        root.putting = false
+        if (status === 200) {
+          root.pendingText = ""
+          root.offline = false
+          if (key === root.dateKey) {
+            root.etag = tag
+            root.etagKey = key
+            root.fileExists = true
+            root.writeLocal(out)
+          }
+          if (root.queuedText !== "") {
+            var next = root.queuedText, nextKey = root.queuedKey
+            root.queuedText = ""
+            root.putDay(nextKey, next, nextKey === key ? tag : (root.etagKey === nextKey ? root.etag : "unknown"))
+          }
+          return
+        }
+        if (status === 412 || status === 428) {
+          if (root.queuedKey === key && root.queuedText !== "") { out = root.queuedText; root.queuedText = "" }
+          root.resolveConflict(key, out)
+          return
+        }
+        if (root.queuedKey === key && root.queuedText !== "") { out = root.queuedText; root.queuedText = "" }
+        root.pendingText = out
+        root.pendingKey = key
+        root.pendingBase = base
+        if (status === 401) root.notify("Timebox couldn't save", "The Beelink refused this laptop's key (~/.config/timebox/token).")
+        root.goOffline()
+      })
+  }
+
+  function resolveConflict(key, out) {
+    root.putting = true
+    Server.request("GET", Server.dayUrl(root.serverUrl, key), {}, function(status, body, tag, exists) {
+      root.putting = false
+      // Edits made meanwhile were on top of the stale day too: they're the newest of ours.
+      if (root.queuedKey === key && root.queuedText !== "") { out = root.queuedText; root.queuedText = "" }
+      if (status !== 200) {
+        root.pendingText = out; root.pendingKey = key; root.pendingBase = "unknown"
+        root.goOffline()
+        return
+      }
+      var merged = Server.conflictMerge(exists ? body : "{}", out, root.nowStamp())
+      if (key === root.dateKey) {
+        root.etag = tag
+        root.etagKey = key
+        root.applyData(merged)
+      }
+      root.notify("This day changed on the Beelink", "Showing the new version; your edit is kept in the versions (‹ ›).")
+      root.putDay(key, merged, tag)
+    })
+  }
+
+  function retryPending() {
+    if (root.pendingText === "" || root.putting) return
+    root.putDay(root.pendingKey, root.pendingText, root.pendingBase)
+  }
+
   function scheduleSave() {
     if (!root.loading && !root.locked) saveTimer.restart()
   }
@@ -338,8 +465,10 @@ Item {
       && root.priorities.every(function(p) { return !p.text })
     if (empty && !root.fileExists) return
     var out = Model.serializeDay(root.dateKey, d)
-    root.lastWritten = root.dateKey + "\n" + out
-    dayFile.setText(out)
+    // Saved on top of the version we loaded; if we never got one, "unknown" makes the
+    // server refuse it and the conflict path keeps both.
+    if (root.serverMode) root.putDay(root.dateKey, out, root.etagKey === root.dateKey ? root.etag : "unknown")
+    else root.writeLocal(out)
     root.savedNotes = notes
     root.savedNotes2 = notes2
     root.fileExists = true
@@ -604,13 +733,43 @@ Item {
   }
 
   FileView {
+    id: configFile
+    path: root.configDir + "/config.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.configText = text()
+    onLoadFailed: root.configText = ""
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: tokenFile
+    path: root.configDir + "/token"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.token = text().trim()
+    onLoadFailed: root.token = ""
+    onFileChanged: reload()
+  }
+
+  // Check the server for changes (Grok Bot imports) while the planner is open,
+  // and retry a save it hasn't taken yet.
+  Timer {
+    interval: 5000
+    repeat: true
+    running: root.opened && root.serverMode
+    onTriggered: root.pendingText !== "" ? root.retryPending() : root.fetchDay()
+  }
+
+  FileView {
     id: dayFile
     path: root.dataDir + "/" + root.dateKey + ".json"
     atomicWrites: true
     blockWrites: true
     printErrors: false
     // Pick up days written from outside (timebox-import), unless an edit is pending.
-    watchChanges: true
+    // With the server, changes come from polling it instead.
+    watchChanges: !root.serverMode
     // Our own saves also fire this; they're skipped in onLoaded so typing in
     // the notes doesn't get reloaded (which reset the cursor to the top).
     onFileChanged: if (!saveTimer.running && !root.editing) { root.watchReload = true; reload() }
@@ -1826,10 +1985,13 @@ Item {
           verticalAlignment: Text.AlignBottom
           text: root.loadError !== ""
             ? "⚠  " + root.loadError + ". Read-only so it isn't overwritten; fix the file, then reopen."
+            : root.offline
+            ? (root.pendingText !== "" ? "⚠  Offline: your last change is waiting to be saved to the Beelink. Read-only until it is."
+              : "⚠  Offline: can't reach the Beelink. Showing this laptop's copy, read-only.")
             : root.viewing
             ? "Viewing v" + (root.viewVersion + 1) + " of " + root.versions.length + " from " + Model.shortTime(root.versions[root.viewVersion].at) + " (read-only)  •  ←/→ versions  •  Esc or Now to go back"
             : "Type to fill  •  Enter down  •  Ctrl S snapshot  •  ←/→ versions  •  Ctrl C/X/V  •  A color  •  Del clear  •  PgUp/PgDn day  •  Esc close"
-          color: root.loadError !== "" ? root.urgentColor : root.muted
+          color: root.loadError !== "" || root.offline ? root.urgentColor : root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           font.letterSpacing: Style.space(1)

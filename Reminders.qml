@@ -2,10 +2,13 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "TimeboxModel.js" as Model
+import "TimeboxServer.js" as Server
 
 // Background service: sends a desktop notification when a timebox starts.
 // Runs once per shell (not per bar), so reminders keep working without the
 // bar widget and never arrive twice on multi-monitor setups.
+// With the Beelink server configured, it also keeps this laptop's copy of today
+// fresh (every minute), which the menu bar and these reminders read.
 Item {
   id: root
 
@@ -21,6 +24,30 @@ Item {
   // Recent "<date>@<slot>-<lead>" keys, so a reload in the same minute
   // can't send a reminder twice.
   property var sent: []
+
+  readonly property string serverUrl: Server.parseConfig(root.configText).server
+  property string configText: ""
+  property string etag: ""
+  property string etagKey: ""
+  property bool fetching: false
+
+  // Copy today from the server into the local file when it changed.
+  function syncToday() {
+    if (root.serverUrl === "" || root.fetching) return
+    var key = root.dateKey
+    root.fetching = true
+    Server.request("GET", Server.dayUrl(root.serverUrl, key),
+      { ifNoneMatch: root.etagKey === key ? root.etag : "" },
+      function(status, body, tag, exists) {
+        root.fetching = false
+        if (status !== 200 || key !== root.dateKey) return
+        root.etag = tag
+        root.etagKey = key
+        if (exists && body !== root.cacheText) cacheFile.setText(body)
+      })
+  }
+
+  property string cacheText: ""
 
   function minuteOfDay() {
     return root.now.getHours() * 60 + root.now.getMinutes()
@@ -75,6 +102,7 @@ Item {
       root.now = date
       dayFile.reload()
       root.check()
+      root.syncToday()
     }
   }
 
@@ -84,10 +112,27 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: {
+      root.cacheText = text()
       var day = Model.parseDay(text())
       root.slots = day ? day.slots : Model.emptyDay().slots
     }
     onLoadFailed: root.slots = Model.emptyDay().slots
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: cacheFile
+    path: root.dataDir + "/" + root.dateKey + ".json"
+    atomicWrites: true
+    printErrors: false
+  }
+
+  FileView {
+    path: Quickshell.env("HOME") + "/.config/timebox/config.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: { root.configText = text(); root.syncToday() }
+    onLoadFailed: root.configText = ""
     onFileChanged: reload()
   }
 
