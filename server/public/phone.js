@@ -285,7 +285,7 @@
     }).catch(function() {
       state.failures++
       if (state.failures > 1 || state.dayText === null)
-        setStatus("Can't reach the Beelink. Showing what was loaded last.")
+        setStatus("Can't reach Timebox. Showing what was loaded last. If this keeps up, reload to sign in again.")
     })
   }
 

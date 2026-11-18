@@ -121,8 +121,8 @@ copy read-only, marked offline, and retries a save it couldn't make. The reminde
 today's copy in `~/.local/share/omarchy-timebox/` fresh every minute for the bar and reminders,
 and sends the desktop's look to the server. Delete `config.json` to go back to local files.
 
-**Phone**: open `https://beelink.tailaa12cd.ts.net:4590` in Safari with Tailscale on, then Share →
-Add to Home Screen. It shows the latest plan: the date with ‹ › (tap the date for today), a jump
+**Phone**: open `https://timebox.joelgaff.com` in Safari (or `https://beelink.tailaa12cd.ts.net:4590`
+with Tailscale on), then Share → Add to Home Screen. It shows the latest plan: the date with ‹ › (tap the date for today), a jump
 bar (Schedule · Priorities · Notes), the schedule opened at the current time, then the top
 priorities and the brain dump. It refreshes every 15 seconds while on screen.
 
@@ -210,6 +210,33 @@ Set these on the widget's entry in `~/.config/omarchy/shell.json`, e.g.
 | --- | --- | --- |
 | `maxLength` | `28` | Longest block name before it's shortened with `…` |
 | `showNext` | `true` | Show the next block when nothing is scheduled right now |
+
+### Public door: timebox.joelgaff.com
+
+The phone view is also published at `https://timebox.joelgaff.com`, read-only and behind
+Cloudflare Access, so the phone doesn't need Tailscale. The data stays on the Beelink; the
+laptop and Grok Bot keep using the tailnet address.
+
+```
+phone ─► timebox.joelgaff.com ─► Cloudflare Access (sign in: one-time code to Joel's email)
+        ─► Cloudflare Tunnel "timebox" ─► Beelink :4592 (timebox-public: read-only instance)
+```
+
+- **Access app** "Timebox" (team `small-base-a70f`): only Joel's email may sign in, by a
+  one-time PIN; sessions last 30 days.
+- **The server checks too**: `timebox-public` (port 4592, `TIMEBOX_ACCESS_TEAM` and
+  `TIMEBOX_ACCESS_AUD` in `~/.config/timebox-server/public.env`) answers only requests with a
+  valid Access JWT for this app (signature against the team's keys, issuer, audience, expiry),
+  static files included, and only GET/HEAD. Without that, it's a bare 403, even if Access were
+  switched off by mistake. Tests: `server/test/access_test.rb`.
+- **Tunnel**: `timebox-tunnel` (systemd user service) runs `cloudflare/cloudflared` (pinned tag)
+  with the tunnel token from `~/.config/timebox-server/tunnel.env`. DNS: `timebox` is a proxied
+  CNAME to the tunnel.
+- **Checked signed out** (`curl https://timebox.joelgaff.com/<path>`): every path, including
+  `/api/days/...`, the page's scripts, and a PUT, redirects to the Access sign-in with no data;
+  a forged `Cf-Access-Jwt-Assertion` header gets the same.
+- **Turn it off**: `systemctl --user disable --now timebox-tunnel timebox-public` on the Beelink
+  (and delete the DNS record if it's for good).
 
 ## Desktop and phone views
 
