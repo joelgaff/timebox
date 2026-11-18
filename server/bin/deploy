@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Deploy the server to the Beelink: copy the code, install the pinned Ruby and
+# gems, install the service, run the tests there, restart. Data is never touched.
+#   server/bin/deploy [ssh-host]
+set -euo pipefail
+host=${1:-joel@beelink.tailaa12cd.ts.net}
+cd "$(dirname "$0")/.."
+
+ssh "$host" "mkdir -p apps/timebox-server"
+rsync -a --delete --exclude /vendor/ --exclude /.bundle/ ./ "$host:apps/timebox-server/"
+ssh "$host" 'bash -s' <<'REMOTE'
+set -euo pipefail
+cd ~/apps/timebox-server
+mise trust --quiet .
+mise install --quiet
+bin/ruby -S bundle config set --local path vendor/bundle
+bin/ruby -S bundle config set --local deployment true
+bin/ruby -S bundle install --quiet
+bin/ruby -S bundle exec rake 2>&1 | grep -v "warning: literal" | tail -1
+mkdir -p ~/.config/systemd/user ~/.config/timebox-server ~/.local/share/timebox-server
+install -m 644 timebox-server.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --quiet timebox-server
+systemctl --user restart timebox-server
+sleep 2
+curl -sf localhost:4590/health && echo " server up"
+REMOTE

@@ -1,0 +1,16 @@
+[Unit]
+Description=Timebox server (days, plans, phone view)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/apps/timebox-server
+Environment=TIMEBOX_DATA=%h/.local/share/timebox-server
+Environment=TIMEBOX_TOKENS=%h/.config/timebox-server/tokens.json
+Environment=TIMEBOX_PORT=4590
+Environment=APP_ENV=production
+ExecStart=%h/apps/timebox-server/bin/ruby -S bundle exec bin/timebox-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

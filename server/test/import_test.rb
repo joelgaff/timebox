@@ -60,6 +60,7 @@ class ImportTest < Minitest::Test
 
   def test_matches_python
     skip "python3 not available" unless system("python3 -c 1", out: File::NULL)
+    skip "bin/timebox-import not here (deployed copy)" unless File.exist?(PY)
     existing = { "date" => "2030-01-01", "slots" => { "09:00" => "Old", "12:30" => "X", "12:45" => "Y" },
                  "splits" => ["12:30"], "slotColors" => { "09:00" => "red" }, "brainDump" => "keep me",
                  "priorities" => [{ "text" => "P", "done" => true }] }
