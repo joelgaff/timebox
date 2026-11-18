@@ -5,6 +5,7 @@ import qs.Commons
 import qs.Ui
 import "TimeboxModel.js" as Model
 import "TimeboxServer.js" as Server
+import "TimeboxLook.js" as Look
 
 Item {
   id: root
@@ -100,8 +101,8 @@ Item {
   }
   readonly property var palette: Model.paletteTones(root.themeColors)
   property bool paletteOpen: false
-  property color line: Util.alpha(foreground, 0.28)
-  property color muted: Util.alpha(foreground, 0.55)
+  property color line: Util.alpha(foreground, Look.LOOK.lineAlpha)
+  property color muted: Util.alpha(foreground, Look.LOOK.mutedAlpha)
   property color selectionFill: Util.alpha(accent, 0.18)
   property string fontFamily: Style.font.menuFamily
   // Everything you write (priorities, notes, blocks, the date) uses a bundled
@@ -111,9 +112,9 @@ Item {
   readonly property bool handInstalled: Qt.fontFamilies().indexOf("Caveat") >= 0
   readonly property string handFamily: handInstalled ? "Caveat"
     : handFont.status === FontLoader.Ready ? handFont.name : fontFamily
-  readonly property real handScale: handInstalled || handFont.status === FontLoader.Ready ? 1.4 : 1
+  readonly property real handScale: handInstalled || handFont.status === FontLoader.Ready ? Look.LOOK.handScale : 1
   readonly property int cornerRadius: Style.cornerRadius
-  readonly property int boxWidth: Math.max(2, Style.space(3))
+  readonly property int boxWidth: Math.max(Look.LOOK.boxWidthMin, Style.space(Look.LOOK.boxWidthSpace))
 
   function open(payloadJson) {
     root.now = new Date()
@@ -847,8 +848,8 @@ Item {
         readonly property int gutter: Style.space(36)
         readonly property int leftWidth: Math.round((width - gutter) * 0.42)
         readonly property int footerHeight: Style.font.bodySmall + Style.space(12)
-        readonly property int labelGap: Style.space(10)
-        readonly property int sectionGap: Style.space(26)
+        readonly property int labelGap: Style.space(Look.LOOK.labelGapSpace)
+        readonly property int sectionGap: Style.space(Look.LOOK.sectionGapSpace)
 
         // ================= Header =================
         Item {
@@ -1129,7 +1130,7 @@ Item {
             anchors.top: prioritiesLabel.bottom
             anchors.topMargin: content.labelGap
             width: parent.width
-            height: Style.space(52) * Model.PRIORITIES
+            height: Style.space(Look.LOOK.priorityRowSpace) * Model.PRIORITIES
             color: "transparent"
             border.color: root.line
             border.width: 1
@@ -1157,9 +1158,9 @@ Item {
                   Rectangle {
                     id: check
                     anchors.left: parent.left
-                    anchors.leftMargin: Style.space(16)
+                    anchors.leftMargin: Style.space(Look.LOOK.checkInsetSpace)
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Style.space(16); height: width
+                    width: Style.space(Look.LOOK.checkSpace); height: width
                     radius: width / 2
                     color: prow.item.done ? root.accent : "transparent"
                     border.color: prow.item.done ? root.accent : root.muted
@@ -1175,12 +1176,12 @@ Item {
                   TextInput {
                     id: pinput
                     anchors.left: check.right
-                    anchors.leftMargin: Style.space(14)
+                    anchors.leftMargin: Style.space(Look.LOOK.checkGapSpace)
                     anchors.right: parent.right
-                    anchors.rightMargin: Style.space(14)
+                    anchors.rightMargin: Style.space(Look.LOOK.checkGapSpace)
                     anchors.verticalCenter: parent.verticalCenter
                     color: root.tone(prow.item.color)
-                    opacity: prow.item.done ? 0.5 : 1
+                    opacity: prow.item.done ? Look.LOOK.doneOpacity : 1
                     font.family: root.handFamily
                     font.pixelSize: Style.font.heading * root.handScale
                     font.strikeout: prow.item.done
@@ -1231,7 +1232,7 @@ Item {
             anchors.topMargin: content.labelGap
             anchors.bottom: parent.bottom
             width: parent.width
-            color: Util.alpha(root.foreground, 0.03)
+            color: Util.alpha(root.foreground, Look.LOOK.dumpFillAlpha)
             border.color: root.line
             border.width: 1
             clip: true
@@ -1239,8 +1240,8 @@ Item {
             Canvas {
               id: dots
               anchors.fill: parent
-              readonly property color dotColor: Util.alpha(root.foreground, 0.22)
-              readonly property int step: Style.space(22)
+              readonly property color dotColor: Util.alpha(root.foreground, Look.LOOK.dumpDotAlpha)
+              readonly property int step: Style.space(Look.LOOK.dumpDotStepSpace)
               onDotColorChanged: requestPaint()
               onWidthChanged: requestPaint()
               onHeightChanged: requestPaint()
@@ -1280,7 +1281,7 @@ Item {
                 wrapMode: TextEdit.Wrap
                 color: root.foreground
                 font.family: root.handFamily
-                font.pixelSize: Style.font.title * root.handScale * 1.25
+                font.pixelSize: Style.font.title * root.handScale * Look.LOOK.dumpTitleScale
                 selectionColor: root.selectionFill
                 selectByMouse: true
                 persistentSelection: true
@@ -1349,7 +1350,7 @@ Item {
                 wrapMode: TextEdit.Wrap
                 color: root.foreground
                 font.family: root.handFamily
-                font.pixelSize: Style.font.title * root.handScale * 1.25
+                font.pixelSize: Style.font.title * root.handScale * Look.LOOK.dumpTitleScale
                 selectionColor: root.selectionFill
                 selectByMouse: true
                 persistentSelection: true
@@ -1556,11 +1557,11 @@ Item {
             width: gridScroll.width - (gridScroll.contentHeight > gridScroll.height ? Style.space(14) : 0)
             height: Model.HALVES * rowHeight
 
-            readonly property real labelWidth: Style.space(50)
+            readonly property real labelWidth: Style.space(Look.LOOK.labelWidthSpace)
             readonly property real cellWidth: width - labelWidth
             // Height of a half hour; a 15-minute row is half of it.
             // Tall enough that a 15-minute row (half of this) still fits readable text.
-            readonly property real rowHeight: Math.max(Style.font.title * 3.2, gridScroll.height / Model.HALVES)
+            readonly property real rowHeight: Math.max(Style.font.title * Look.LOOK.rowHeightTitles, gridScroll.height / Model.HALVES)
 
             function slotAt(mx, my) {
               var u = my / rowHeight
@@ -1572,7 +1573,7 @@ Item {
             function slotX(i) { return labelWidth }
             function slotY(i) { return root.rows[i] ? root.rows[i].y * rowHeight : 0 }
             function rowH(i) { return root.rows[i] ? root.rows[i].h * rowHeight : rowHeight }
-            function textSize(i) { return Math.min(Style.font.heading * root.handScale * 1.25, rowH(i) * 0.82) }
+            function textSize(i) { return Math.min(Style.font.heading * root.handScale * Look.LOOK.blockHeadingScale, rowH(i) * Look.LOOK.blockFit) }
 
             Item {
               id: gridKeys
@@ -1613,7 +1614,7 @@ Item {
             Rectangle {
               width: grid.labelWidth
               height: parent.height
-              color: Util.alpha(root.foreground, 0.05)
+              color: Util.alpha(root.foreground, Look.LOOK.labelBandAlpha)
             }
 
             // Time labels; click one to split its half hour into 15-minute rows
@@ -1633,9 +1634,9 @@ Item {
                 verticalAlignment: Text.AlignVCenter
                 text: row ? Model.rowLabel(row) : ""
                 color: current || labelMouse.containsMouse ? root.accent : root.foreground
-                opacity: minor && !current && !labelMouse.containsMouse ? 0.55 : 1
+                opacity: minor && !current && !labelMouse.containsMouse ? Look.LOOK.timeMinorOpacity : 1
                 font.family: root.fontFamily
-                font.pixelSize: Math.min(minor ? Style.font.title * 0.75 : Style.font.title, height * 0.7)
+                font.pixelSize: Math.min(minor ? Style.font.title * Look.LOOK.timeMinorScale : Style.font.title, height * Look.LOOK.timeFit)
                 font.bold: !minor
                 MouseArea {
                   id: labelMouse
@@ -1710,7 +1711,7 @@ Item {
                 x: m === 0 ? 0 : grid.labelWidth
                 width: grid.width - x; height: 1
                 color: root.line
-                opacity: m === 0 ? 1 : m === 30 ? 0.45 : 0.25
+                opacity: m === 0 ? 1 : m === 30 ? Look.LOOK.halfHourLineOpacity : Look.LOOK.quarterLineOpacity
               }
             }
             Repeater {
@@ -1730,9 +1731,9 @@ Item {
                 required property var modelData
                 readonly property int start: modelData.start
                 visible: !(root.editing && start >= root.selStart && start <= root.selEnd)
-                x: grid.slotX(start) + Style.space(12)
+                x: grid.slotX(start) + Style.space(Look.LOOK.blockInsetSpace)
                 y: grid.slotY(start)
-                width: grid.cellWidth - Style.space(24)
+                width: grid.cellWidth - Style.space(Look.LOOK.blockInsetSpace * 2)
                 height: grid.rowH(start)
                 verticalAlignment: Text.AlignVCenter
                 text: modelData.text
@@ -1757,7 +1758,7 @@ Item {
               x: grid.labelWidth - Style.space(5)
               y: grid.slotY(row) + frac * grid.rowH(row) - height / 2
               width: grid.width - x
-              height: Style.space(10)
+              height: Style.space(Look.LOOK.nowDotSpace)
               z: 4
 
               Rectangle {
@@ -1769,7 +1770,7 @@ Item {
                 x: parent.height / 2
                 anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - x
-                height: Math.max(2, Style.space(2))
+                height: Math.max(Look.LOOK.nowLineMin, Style.space(Look.LOOK.nowLineSpace))
                 color: root.accent
               }
             }
