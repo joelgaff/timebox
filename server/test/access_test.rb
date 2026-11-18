@@ -44,7 +44,7 @@ class AccessTest < Minitest::Test
     @dir = Dir.mktmpdir
     Timebox::App.set :data_dir, File.join(@dir, "data")
     Timebox::App.set :tokens_file, File.join(@dir, "tokens.json")
-    Timebox::App.set :public_access, { team: TEAM, aud: AUD }
+    Timebox::App.set :public_access, { team: TEAM, aud: AUD, emails: ["me@example.com"] }
     Timebox::App.set :access_keys, KeysStub.new(jwks)
     Timebox::App.reset!
     Timebox::App.store.write_day("2030-01-01", '{"date":"2030-01-01","brainDump":"secret notes"}', if_match: "none")
@@ -107,6 +107,20 @@ class AccessTest < Minitest::Test
       get "/api/days/2030-01-01"
       assert_equal 403, last_response.status, "token #{i}"
     end
+  end
+
+  # Even a genuine Access sign-in is refused unless it's an allowed email, so a mistake in
+  # the Access policy can't let anyone else in.
+  def test_only_allowed_emails
+    signed_in(jwt(good_claims.merge("email" => "someone@else.com")))
+    get "/api/days/2030-01-01"
+    assert_equal 403, last_response.status
+    signed_in(jwt(good_claims.reject { |k, _| k == "email" }))
+    get "/api/days/2030-01-01"
+    assert_equal 403, last_response.status
+    signed_in(jwt(good_claims.merge("email" => "Me@Example.com")))
+    get "/api/days/2030-01-01"
+    assert_equal 200, last_response.status
   end
 
   def test_alg_none_is_refused

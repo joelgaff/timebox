@@ -227,7 +227,7 @@ phone ─► timebox.joelgaff.com ─► Cloudflare Access (sign in: one-time co
 - **The server checks too**: `timebox-public` (port 4592, `TIMEBOX_ACCESS_TEAM` and
   `TIMEBOX_ACCESS_AUD` in `~/.config/timebox-server/public.env`) answers only requests with a
   valid Access JWT for this app (signature against the team's keys, issuer, audience, expiry),
-  static files included, and only GET/HEAD. Without that, it's a bare 403, even if Access were
+  static files included, only for the emails in `TIMEBOX_ACCESS_EMAILS`, and only GET/HEAD. Without that, it's a bare 403, even if Access were
   switched off by mistake. Tests: `server/test/access_test.rb`.
 - **Tunnel**: `timebox-tunnel` (systemd user service) runs `cloudflare/cloudflared` (pinned tag)
   with the tunnel token from `~/.config/timebox-server/tunnel.env`. DNS: `timebox` is a proxied

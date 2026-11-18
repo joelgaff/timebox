@@ -99,6 +99,9 @@ module Timebox
         keys = @settings.access_keys&.call(kid)
         claims = Access.verify(token, team: access[:team], aud: access[:aud], jwks: keys)
         return deny(403, "sign in through Cloudflare Access") unless claims
+        # Only the allowed emails, even if the Access policy were ever loosened by mistake.
+        allowed = Array(access[:emails]).map(&:downcase)
+        return deny(403, "not allowed") unless allowed.include?(claims["email"].to_s.downcase)
         @app.call(env)
       end
 

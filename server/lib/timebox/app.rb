@@ -21,7 +21,10 @@ module Timebox
     # The public door: with TIMEBOX_ACCESS_TEAM and TIMEBOX_ACCESS_AUD set, this instance
     # is the read-only one behind the Cloudflare Tunnel and only answers signed-in requests.
     team = ENV["TIMEBOX_ACCESS_TEAM"].to_s.chomp("/")
-    set :public_access, team.empty? ? nil : { team: team, aud: ENV.fetch("TIMEBOX_ACCESS_AUD") }
+    set :public_access, team.empty? ? nil : {
+      team: team, aud: ENV.fetch("TIMEBOX_ACCESS_AUD"),
+      emails: ENV.fetch("TIMEBOX_ACCESS_EMAILS").split(",").map(&:strip).reject(&:empty?)
+    }
     set :access_keys, team.empty? ? nil : Access::KeyCache.new(team)
     use Access::Gate, self
 
