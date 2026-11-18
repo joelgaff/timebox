@@ -115,6 +115,36 @@ class AppTest < Minitest::Test
     assert_equal 400, last_response.status
   end
 
+  def test_shared_planner_code_for_the_phone
+    get "/shared/TimeboxModel.js"
+    assert last_response.ok?
+    assert_match(/javascript/, last_response.content_type)
+    refute_includes last_response.body, ".pragma library"
+    assert_includes last_response.body, "function buildRows"
+    get "/shared/TimeboxLook.js"
+    assert_includes last_response.body, "var LOOK"
+    get "/shared/Timebox.qml"
+    assert_equal 404, last_response.status
+  end
+
+  # curl --data-binary without a type sends it as a form; a font is full of & and =.
+  def test_binary_upload_sent_as_a_form
+    auth "L"
+    header "Content-Type", "application/x-www-form-urlencoded"
+    data = (["a=1&"] * 5000).join
+    put "/api/fonts/big-abc.woff2", data
+    assert_equal 200, last_response.status, last_response.body
+    get "/fonts/big-abc.woff2"
+    assert_equal data, last_response.body
+  end
+
+  def test_woff2_fonts_have_a_font_type
+    auth "L"
+    put "/api/fonts/hand-abc.woff2", "wOF2"
+    get "/fonts/hand-abc.woff2"
+    assert_equal "font/woff2", last_response.content_type
+  end
+
   def test_phone_page
     get "/"
     assert last_response.ok?

@@ -18,6 +18,21 @@ module Timebox
     # Rack 3 servers may hand over a body that can't be re-read; make it re-readable
     # so the raw JSON is still there after Sinatra looks at it as a form.
     use Rack::RewindableInput::Middleware
+
+    # Every /api/ body is JSON or a file, never a form. curl -d / --data-binary label
+    # bodies as forms by default; don't let Rack try to parse them as one.
+    class RawBodies
+      def initialize(app) = @app = app
+
+      def call(env)
+        if env["PATH_INFO"].start_with?("/api/") &&
+           env["CONTENT_TYPE"].to_s.start_with?("application/x-www-form-urlencoded", "multipart/form-data")
+          env["CONTENT_TYPE"] = "application/octet-stream"
+        end
+        @app.call(env)
+      end
+    end
+    use RawBodies
     set :dump_errors, true
 
     set :server, "webrick"
@@ -29,6 +44,13 @@ module Timebox
     set :raise_errors, false
     set :host_authorization, { permitted_hosts: [] } # Tailscale decides who gets here
     set :data_dir, ENV.fetch("TIMEBOX_DATA", File.expand_path("~/.local/share/timebox-server"))
+    # The planner's own JS (rows, runs, colors, look values), shared with the phone page:
+    # shared/ in a deployed copy, the repo root in a checkout.
+    set :shared_dir, ENV.fetch("TIMEBOX_SHARED") {
+      deployed = File.expand_path("../../shared", __dir__)
+      File.directory?(deployed) ? deployed : File.expand_path("../../..", __dir__)
+    }
+    SHARED = %w[TimeboxModel.js TimeboxLook.js].freeze
     set :tokens_file, ENV.fetch("TIMEBOX_TOKENS", File.expand_path("~/.config/timebox-server/tokens.json"))
 
     def self.store
@@ -141,6 +163,16 @@ module Timebox
     end
 
     # The desktop's look, for the phone page.
+    # QML ".pragma library" files, minus the pragma, for the browser.
+    get %r{/shared/([\w.]+)} do |name|
+      fail_with(404, "not shared") unless SHARED.include?(name)
+      path = File.join(settings.shared_dir, name)
+      fail_with(404, "missing") unless File.file?(path)
+      content_type "text/javascript"
+      cache_control :no_cache
+      File.read(path).sub(/^\.pragma library\s*$/, "")
+    end
+
     get "/api/view" do
       content, tag = store.read_view
       headers "ETag" => quoted(tag), "Cache-Control" => "no-cache"

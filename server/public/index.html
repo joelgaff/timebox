@@ -1,1 +1,58 @@
-<!doctype html><title>Timebox</title><p>Phone view coming soon.</p>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Timebox">
+<meta name="theme-color" content="#1c120d">
+<title>Timebox</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/phone.css">
+<style id="profile-fonts"></style>
+</head>
+<body>
+<header id="top">
+  <div class="dateRow">
+    <div class="dateSquare"><span id="dayNum"></span><span id="dayMon"></span></div>
+    <button class="nav" id="prev" aria-label="Previous day">‹</button>
+    <button class="dateText" id="dateText" aria-label="Go to today"></button>
+    <button class="nav" id="next" aria-label="Next day">›</button>
+  </div>
+  <nav class="jump">
+    <button data-to="schedule">Schedule</button>
+    <button data-to="priorities">Priorities</button>
+    <button data-to="notes">Notes</button>
+  </nav>
+  <div id="status" hidden></div>
+</header>
+
+<main>
+  <section id="schedule">
+    <div id="grid"></div>
+  </section>
+
+  <section id="priorities">
+    <h2>Top Priorities</h2>
+    <div class="prioritiesBox" id="prioritiesBox"></div>
+  </section>
+
+  <section id="notes">
+    <h2>Brain Dump</h2>
+    <div class="dumpBox">
+      <div class="note" id="note1"></div>
+      <div class="note" id="note2"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/shared/TimeboxModel.js"></script>
+<script src="/shared/TimeboxLook.js"></script>
+<script src="/phone-view.js"></script>
+<script src="/phone.js"></script>
+</body>
+</html>

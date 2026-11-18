@@ -1,0 +1,227 @@
+/* Phone view of the Timebox planner. Colors, fonts and sizes come from the desktop's
+   view profile (set as the CSS variables below by phone.js); the defaults here only
+   show until it loads. Keep in step with Timebox.qml (README, "Desktop and phone views"). */
+:root {
+  --bg: #1c120d;
+  --fg: #c6b395;
+  --accent: #d28a41;
+  --urgent: #d65a4f;
+  --line: rgba(198, 179, 149, 0.28);
+  --muted: rgba(198, 179, 149, 0.55);
+  --band: rgba(198, 179, 149, 0.05);
+  --dumpFill: rgba(198, 179, 149, 0.03);
+  --dumpDot: rgba(198, 179, 149, 0.22);
+  --hover: rgba(198, 179, 149, 0.1);
+  --ui: ui-monospace, monospace;
+  --hand: "Comic Sans MS", cursive;
+  --title: 17px;
+  --heading: 20px;
+  --body: 15px;
+  --bodySmall: 13px;
+  --caption: 11px;
+  --displayLarge: 26px;
+  --s: 1.25px;               /* one Omarchy space unit */
+  --radius: 0px;
+  --handScale: 1.4;
+  --dumpTitleScale: 1.25;
+  --priorityRow: 52;
+  --check: 16;
+  --checkInset: 16;
+  --checkGap: 14;
+  --labelGap: 10;
+  --sectionGap: 26;
+  --dumpDotStep: 22;
+  --dumpPad: 16;
+  --doneOpacity: 0.5;
+  --placeholderOpacity: 0.6;
+  --gutter: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--bg); }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--ui);
+  font-size: var(--body);
+  -webkit-text-size-adjust: 100%;
+  overflow-x: clip; /* not hidden: that would stop the header from sticking */
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+button:active { background: var(--hover); }
+
+/* ---- Header: date + jump bar, stays put ---- */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  padding: calc(env(safe-area-inset-top) + 10px) calc(var(--gutter) + env(safe-area-inset-right)) 10px calc(var(--gutter) + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+}
+
+.dateRow {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--s) * 8);
+}
+
+.dateSquare {
+  flex: none;
+  width: calc(var(--s) * 48);
+  height: calc(var(--s) * 48);
+  background: var(--fg);
+  color: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  line-height: 1;
+}
+#dayNum { font-size: var(--displayLarge); }
+#dayMon { font-size: var(--caption); letter-spacing: calc(var(--s) * 2); margin-top: 2px; }
+
+.nav {
+  flex: none;
+  width: calc(var(--s) * 32);
+  height: calc(var(--s) * 32);
+  font-size: var(--title);
+  line-height: 1;
+}
+
+.dateText {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-bottom: 1px solid var(--fg);
+  border-radius: 0;
+  font-family: var(--hand);
+  font-size: calc(var(--heading) * var(--handScale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px 2px;
+}
+
+.jump {
+  display: flex;
+  gap: calc(var(--s) * 4);
+  margin-top: 10px;
+}
+.jump button {
+  flex: 1;
+  height: calc(var(--s) * 28);
+  font-size: var(--bodySmall);
+}
+
+#status {
+  margin-top: 8px;
+  font-size: var(--bodySmall);
+  color: var(--urgent);
+}
+
+main {
+  padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 40px) calc(var(--gutter) + env(safe-area-inset-left));
+}
+
+section { scroll-margin-top: var(--headerH, 120px); }
+
+h2 {
+  margin: calc(var(--s) * var(--sectionGap)) 0 calc(var(--s) * var(--labelGap));
+  font-size: var(--heading);
+  font-weight: bold;
+}
+
+/* ---- Schedule grid (positions set by phone.js) ---- */
+#schedule { padding-top: 14px; }
+#grid { position: relative; width: 100%; }
+#grid > * { position: absolute; }
+.band { left: 0; top: 0; bottom: 0; background: var(--band); }
+.vline { top: 0; bottom: 0; width: 1px; background: var(--line); }
+.hline { height: 1px; right: 0; background: var(--line); }
+.time {
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  color: var(--fg);
+}
+.time.minor { font-weight: normal; }
+.time.current { color: var(--accent); opacity: 1 !important; }
+.box { border-style: solid; border-color: var(--accent); z-index: 2; }
+.blockText {
+  display: flex;
+  align-items: center;
+  font-family: var(--hand);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.1;
+  z-index: 3;
+}
+.blockText span { overflow: hidden; text-overflow: ellipsis; }
+.now { z-index: 4; display: flex; align-items: center; pointer-events: none; }
+.now .dot { flex: none; border-radius: 50%; background: var(--accent); }
+.now .bar { flex: 1; background: var(--accent); }
+
+/* ---- Priorities ---- */
+.prioritiesBox { border: 1px solid var(--line); }
+.priority {
+  position: relative;
+  height: calc(var(--s) * var(--priorityRow));
+  display: flex;
+  align-items: center;
+}
+.priority + .priority { border-top: 1px solid var(--line); }
+.check {
+  flex: none;
+  margin-left: calc(var(--s) * var(--checkInset));
+  width: calc(var(--s) * var(--check));
+  height: calc(var(--s) * var(--check));
+  border-radius: 50%;
+  border: max(1px, calc(var(--s) * 2)) solid var(--muted);
+}
+.priority.done .check { background: var(--accent); border-color: var(--accent); }
+.ptext {
+  margin: 0 calc(var(--s) * var(--checkGap));
+  font-family: var(--hand);
+  font-size: calc(var(--heading) * var(--handScale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.priority.done .ptext { text-decoration: line-through; opacity: var(--doneOpacity); }
+.placeholder { color: var(--muted); opacity: var(--placeholderOpacity); }
+
+/* ---- Brain dump: the two desktop columns, stacked ---- */
+.dumpBox {
+  border: 1px solid var(--line);
+  background-color: var(--dumpFill);
+  background-image: linear-gradient(var(--dumpDot), var(--dumpDot));
+  padding: calc(var(--s) * var(--dumpPad));
+  min-height: 200px;
+}
+.note {
+  font-family: var(--hand);
+  font-size: calc(var(--title) * var(--handScale) * var(--dumpTitleScale));
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.note + .note { margin-top: calc(var(--s) * var(--dumpPad)); }
+.note p { margin: 0; min-height: 1em; }
+.note ul, .note ol { margin: 0; padding-left: 1.2em; }

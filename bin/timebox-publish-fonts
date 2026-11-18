@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Send the planner's fonts to the Timebox server so the phone page draws with the same
+# ones: the Omarchy UI font (regular + bold) and the handwriting font. Files are named
+# by content hash, so a font change gets a new name and phones never use a stale one.
+# Writes ~/.cache/timebox/fonts.json, which the plugin puts in the view profile.
+#   timebox-publish-fonts "<UI font family>" ["<hand family>"]
+set -euo pipefail
+shopt -s inherit_errexit
+ui_family=${1:?UI font family}
+hand_family=${2:-Caveat}
+config=~/.config/timebox/config.json
+server=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("server","").rstrip("/"))' "$config" 2>/dev/null || true)
+[ -n "$server" ] || exit 0
+token=$(cat ~/.config/timebox/token)
+work=~/.cache/timebox/fonts
+mkdir -p "$work"
+
+# publish <label> <family> <style> -> prints the published file name
+publish() {
+  local label=$1 family=$2 style=$3 file ext hash name
+  file=$(fc-match -f '%{file}' "$family:style=$style")
+  [ -f "$file" ] || return 1
+  hash=$(sha256sum "$file" | cut -c1-12)
+  if command -v woff2_compress >/dev/null && [[ $file == *.ttf || $file == *.otf ]]; then
+    ext=woff2
+    name="$label-$hash.$ext"
+    if [ ! -f "$work/$name" ]; then
+      cp "$file" "$work/src.${file##*.}"
+      woff2_compress "$work/src.${file##*.}" >/dev/null
+      mv "$work/src.woff2" "$work/$name"
+      rm -f "$work/src.${file##*.}"
+    fi
+  else
+    ext=${file##*.}
+    name="$label-$hash.$ext"
+    cp -n "$file" "$work/$name"
+  fi
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$server/fonts/$name")" != 200 ]; then
+    curl -sf -X PUT -H "Authorization: Bearer $token" -H "Content-Type: application/octet-stream" --data-binary @"$work/$name" "$server/api/fonts/$name" >/dev/null
+  fi
+  echo "$name"
+}
+
+ui_regular=$(publish ui-regular "$ui_family" Regular)
+ui_bold=$(publish ui-bold "$ui_family" Bold) || ui_bold=$ui_regular
+hand=$(publish hand "$hand_family" Regular)
+python3 - "$ui_family" "$ui_regular" "$ui_bold" "$hand_family" "$hand" > ~/.cache/timebox/fonts.json.tmp <<'PY'
+import json, sys
+ui, reg, bold, hand_family, hand = sys.argv[1:]
+print(json.dumps({"ui": {"family": ui, "regular": reg, "bold": bold},
+                  "hand": {"family": hand_family, "regular": hand}}))
+PY
+mv ~/.cache/timebox/fonts.json.tmp ~/.cache/timebox/fonts.json

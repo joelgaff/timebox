@@ -1,14 +1,17 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 import "TimeboxModel.js" as Model
 import "TimeboxServer.js" as Server
+import "TimeboxLook.js" as Look
 
 // Background service: sends a desktop notification when a timebox starts.
 // Runs once per shell (not per bar), so reminders keep working without the
 // bar widget and never arrive twice on multi-monitor setups.
 // With the Beelink server configured, it also keeps this laptop's copy of today
-// fresh (every minute), which the menu bar and these reminders read.
+// fresh (every minute), which the menu bar and these reminders read, and sends the
+// desktop's look (theme colors, fonts, sizes) so the phone page matches it.
 Item {
   id: root
 
@@ -48,6 +51,79 @@ Item {
   }
 
   property string cacheText: ""
+
+  // ---- View profile for the phone page ----
+  property string token: ""
+  property var themeColors: ({})
+  property string accentSetting: ""
+  property string fontsText: ""
+  property string sentProfile: ""
+
+  function resolveTone(name) {
+    var t = root.themeColors
+    if (!name || name === "foreground") return t.foreground || String(Color.menu.text)
+    if (name.charAt(0) === "#") return name
+    if (name === "accent") return t.accent || String(Color.accent)
+    if (name === "red") return t.red || String(Color.urgent)
+    return t[name] || t.accent || String(Color.accent)
+  }
+
+  function viewProfile() {
+    var tones = {}
+    var names = ["foreground", "red", "accent"].concat(Model.THEME_TONES)
+    for (var i = 0; i < names.length; i++) tones[names[i]] = String(root.resolveTone(names[i]))
+    var accent = root.accentSetting && root.accentSetting.charAt(0) !== "#" ? root.resolveTone(root.accentSetting) : tones.accent
+    var fonts = {}
+    try { fonts = JSON.parse(root.fontsText || "{}") } catch (e) { fonts = {} }
+    return {
+      colors: {
+        background: String(Color.menu.background),
+        foreground: String(Color.menu.text),
+        accent: String(accent),
+        urgent: String(Color.urgent),
+        tones: tones
+      },
+      fonts: fonts,
+      style: {
+        title: Style.font.title, heading: Style.font.heading, body: Style.font.body,
+        bodySmall: Style.font.bodySmall, caption: Style.font.caption,
+        display: Style.font.display, displayLarge: Style.font.displayLarge,
+        space: Style.spaceReal(1), cornerRadius: Style.cornerRadius
+      },
+      look: Look.LOOK,
+      hours: { start: Model.START_HOUR, end: Model.END_HOUR }
+    }
+  }
+
+  function publishView() {
+    if (root.serverUrl === "" || root.token === "") return
+    var body = JSON.stringify(root.viewProfile())
+    if (body === root.sentProfile) return
+    Server.request("PUT", root.serverUrl + "/api/view",
+      { token: root.token, body: body, contentType: "application/json" },
+      function(status) { if (status === 200) root.sentProfile = body })
+  }
+
+  function publishFonts() {
+    if (root.serverUrl === "") return
+    Quickshell.execDetached([Qt.resolvedUrl("bin/timebox-publish-fonts").toString().replace("file://", ""),
+      Style.font.menuFamily, "Caveat"])
+  }
+
+  // Coalesce theme/font/settings changes into one publish.
+  Timer {
+    id: publishTimer
+    interval: 2000
+    onTriggered: root.publishView()
+  }
+
+  readonly property string menuFamily: Style.font.menuFamily
+  onMenuFamilyChanged: root.publishFonts()
+  onThemeColorsChanged: publishTimer.restart()
+  onAccentSettingChanged: publishTimer.restart()
+  onFontsTextChanged: publishTimer.restart()
+  onTokenChanged: publishTimer.restart()
+  onServerUrlChanged: { root.publishFonts(); publishTimer.restart() }
 
   function minuteOfDay() {
     return root.now.getHours() * 60 + root.now.getMinutes()
@@ -141,9 +217,46 @@ Item {
     path: root.dataDir + "/settings.json"
     watchChanges: true
     printErrors: false
-    onLoaded: root.mode = Model.reminderMode(Model.parseSettings(text()))
+    onLoaded: {
+      var settings = Model.parseSettings(text())
+      root.mode = Model.reminderMode(settings)
+      root.accentSetting = settings.accent || ""
+    }
     onLoadFailed: root.mode = "start"
     onFileChanged: reload()
+  }
+
+  FileView {
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme/colors.toml"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.themeColors = Model.parseThemeColors(text())
+    onFileChanged: reload()
+  }
+
+  FileView {
+    path: Quickshell.env("HOME") + "/.config/timebox/token"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.token = text().trim()
+    onFileChanged: reload()
+  }
+
+  FileView {
+    path: Quickshell.env("HOME") + "/.cache/timebox/fonts.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.fontsText = text()
+    onFileChanged: reload()
+  }
+
+  // Theme switches also restyle the shell (Color/Style); republish now and then so
+  // anything that changed without a file event still reaches the phone.
+  Timer {
+    interval: 10 * 60 * 1000
+    repeat: true
+    running: root.serverUrl !== ""
+    onTriggered: { root.sentProfile = ""; root.publishView() }
   }
 
   IpcHandler {

@@ -7,7 +7,10 @@ host=${1:-joel@beelink.tailaa12cd.ts.net}
 cd "$(dirname "$0")/.."
 
 ssh "$host" "mkdir -p apps/timebox-server"
-rsync -a --delete --exclude /vendor/ --exclude /.bundle/ ./ "$host:apps/timebox-server/"
+rsync -a --delete --exclude /vendor/ --exclude /.bundle/ --exclude /shared/ ./ "$host:apps/timebox-server/"
+# The planner's shared JS, served to the phone page.
+ssh "$host" "mkdir -p apps/timebox-server/shared"
+rsync -a ../TimeboxModel.js ../TimeboxLook.js "$host:apps/timebox-server/shared/"
 ssh "$host" 'bash -s' <<'REMOTE'
 set -euo pipefail
 cd ~/apps/timebox-server
