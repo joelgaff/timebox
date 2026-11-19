@@ -13,7 +13,8 @@ days, takes plans from Grok Bot, and serves a read-only phone view.
 ![Timebox Planner](preview.png)
 
 - **Top Priorities**: three items; click the circle to mark one done.
-- **Brain Dump**: free-form notes on a dotted pad, in two columns.
+- **Brain Dump**: free-form notes on a dotted pad, in two columns: **Today** (left) and
+  **Tomorrow** (right). An empty box starts as a bulleted list when you click in.
 - **Schedule**: one column of half-hour rows, 6 AM to 8 PM, that scrolls when the window is short.
   Consecutive rows with the same text are drawn as one boxed timebox; every block gets a box.
 - **15-minute rows**: click a time label (`9` or `:30`) to split that half hour into two

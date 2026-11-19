@@ -80,6 +80,15 @@ test("browser rgb() colors map back to theme names", () => {
   assert.match(out(d).brainDump2, /color:tb-red/)
 })
 
+test("an empty starter list saves as no notes; a list with items is kept", () => {
+  assert.strictEqual(out(E.setNotes(M, day(), 2, "<ul><li><br></li></ul>", [])).brainDump2, undefined)
+  assert.match(out(E.setNotes(M, day(), 2, "<ul><li>Call mom</li><li><br></li></ul>", [])).brainDump2, /<li>Call mom<\/li>/)
+})
+
+test("an empty notes box starts as a list", () => {
+  assert.strictEqual(E.STARTER_LIST, "<ul><li><br></li></ul>")
+})
+
 test("priorities", () => {
   const d = E.setPriority(M, day(), 1, { text: "Ship it", done: true })
   assert.deepStrictEqual(out(d).priorities[1], { text: "Ship it", done: true })

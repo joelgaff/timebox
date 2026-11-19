@@ -44,7 +44,9 @@ var LOOK = {
   dumpDotAlpha: 0.22,
   dumpDotStepSpace: 22,
   dumpPadSpace: 16,
-  dumpTitleScale: 1.25          // notes: title font x hand scale x this
+  dumpTitleScale: 1.25,         // notes: title font x hand scale x this
+  dumpCaptionGapSpace: 6,       // "TODAY" / "TOMORROW" caption above each notes column
+  captionLetterSpace: 2
 }
 
 // Omarchy space units -> pixels, for the phone (style.space = pixels per unit).

@@ -178,6 +178,19 @@ Item {
     return Model.tonesToColors(Model.isRichText(stored) ? stored : Model.plainToHtml(stored), root.tone)
   }
 
+  // An empty notes box starts as a bulleted list when you click in, and goes back to
+  // empty (placeholder showing) if you leave it without writing anything.
+  readonly property string listStarter: "<ul><li></li></ul>"
+  function starterList(edit, focused, target) {
+    if (focused) root.colorTarget = target
+    if (root.locked || edit.length > 0) return
+    var was = root.loading
+    root.loading = true
+    edit.text = focused ? root.listStarter : ""
+    root.loading = was
+    if (focused) edit.cursorPosition = 0
+  }
+
   function versionHasNotes(v) {
     return !!v && (v.notes !== undefined || v.notes2 !== undefined)
   }
@@ -1255,11 +1268,36 @@ Item {
               }
             }
 
+            // Left column: notes for today; right: notes for tomorrow.
+            Text {
+              id: dumpCaption1
+              anchors.top: parent.top
+              anchors.left: parent.left
+              anchors.margins: Style.space(16)
+              text: "TODAY"
+              color: root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: Style.space(Look.LOOK.captionLetterSpace)
+            }
+            Text {
+              id: dumpCaption2
+              anchors.top: parent.top
+              anchors.left: dumpFlick2.left
+              anchors.topMargin: Style.space(16)
+              text: "TOMORROW"
+              color: root.muted
+              font: dumpCaption1.font
+            }
+
             Flickable {
               id: dumpFlick
-              anchors.top: parent.top
+              anchors.top: dumpCaption1.bottom
+              anchors.topMargin: Style.space(Look.LOOK.dumpCaptionGapSpace)
               anchors.bottom: parent.bottom
-              anchors.margins: Style.space(16)
+              anchors.bottomMargin: Style.space(16)
+              anchors.leftMargin: Style.space(16)
               anchors.left: parent.left
               width: (dumpBox.width - Style.space(16) * 4 - 1) / 2
               contentWidth: width
@@ -1286,7 +1324,7 @@ Item {
                 selectByMouse: true
                 persistentSelection: true
                 readOnly: root.locked
-                onActiveFocusChanged: if (activeFocus) root.colorTarget = "dump1"
+                onActiveFocusChanged: root.starterList(dumpEdit, activeFocus, "dump1")
                 onCursorRectangleChanged: dumpFlick.ensureVisible(cursorRectangle)
                 onTextChanged: if (!root.loading && !root.locked) { root.brainDump = text; root.scheduleSave() }
                 Keys.onEscapePressed: root.dismiss()
@@ -1294,7 +1332,7 @@ Item {
 
                 Text {
                   visible: dumpEdit.length === 0 && !dumpEdit.activeFocus && !root.exporting
-                  text: "Everything on your mind…"
+                  text: "Notes for today…"
                   color: root.muted
                   opacity: 0.6
                   font: dumpEdit.font
@@ -1326,9 +1364,11 @@ Item {
 
             Flickable {
               id: dumpFlick2
-              anchors.top: parent.top
+              anchors.top: dumpCaption1.bottom
+              anchors.topMargin: Style.space(Look.LOOK.dumpCaptionGapSpace)
               anchors.bottom: parent.bottom
-              anchors.margins: Style.space(16)
+              anchors.bottomMargin: Style.space(16)
+              anchors.rightMargin: Style.space(16)
               anchors.right: parent.right
               width: (dumpBox.width - Style.space(16) * 4 - 1) / 2
               contentWidth: width
@@ -1355,7 +1395,7 @@ Item {
                 selectByMouse: true
                 persistentSelection: true
                 readOnly: root.locked
-                onActiveFocusChanged: if (activeFocus) root.colorTarget = "dump2"
+                onActiveFocusChanged: root.starterList(dumpEdit2, activeFocus, "dump2")
                 onCursorRectangleChanged: dumpFlick2.ensureVisible(cursorRectangle)
                 onTextChanged: if (!root.loading && !root.locked) { root.brainDump2 = text; root.scheduleSave() }
                 Keys.onEscapePressed: root.dismiss()
@@ -1363,7 +1403,7 @@ Item {
 
                 Text {
                   visible: dumpEdit2.length === 0 && !dumpEdit2.activeFocus && !root.exporting
-                  text: "…and more"
+                  text: "Notes for tomorrow…"
                   color: root.muted
                   opacity: 0.6
                   font: dumpEdit2.font

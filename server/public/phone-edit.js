@@ -5,6 +5,8 @@
 // one per 45-minute round) and before notes are wiped.
 ;(function(root) {
   var ROUND_MS = 45 * 60 * 1000
+  // An empty notes box starts as a bulleted list (the desktop does the same).
+  var STARTER_LIST = "<ul><li><br></li></ul>"
 
   function copy(day) { return JSON.parse(JSON.stringify(day)) }
 
@@ -96,7 +98,7 @@
     return d
   }
 
-  var api = { setBlock: setBlock, blockAt: blockAt, setPriority: setPriority, setNotes: setNotes, keepVersion: keepVersion }
+  var api = { STARTER_LIST: STARTER_LIST, setBlock: setBlock, blockAt: blockAt, setPriority: setPriority, setNotes: setNotes, keepVersion: keepVersion }
   if (typeof module !== "undefined" && module.exports) module.exports = api
   else root.PhoneEdit = api
 })(this)

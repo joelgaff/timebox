@@ -73,7 +73,8 @@
       "--checkInset": look.checkInsetSpace, "--checkGap": look.checkGapSpace,
       "--labelGap": look.labelGapSpace, "--sectionGap": look.sectionGapSpace,
       "--dumpDotStep": look.dumpDotStepSpace, "--dumpPad": look.dumpPadSpace,
-      "--doneOpacity": look.doneOpacity, "--placeholderOpacity": look.placeholderOpacity
+      "--doneOpacity": look.doneOpacity, "--placeholderOpacity": look.placeholderOpacity,
+      "--dumpCaptionGap": look.dumpCaptionGapSpace, "--captionLetter": look.captionLetterSpace
     }
     for (var k in vars) root.setProperty(k, vars[k])
     document.querySelector('meta[name="theme-color"]').setAttribute("content", PV.css(c.background))
@@ -238,8 +239,8 @@
     drawHeader()
     var v = drawGrid(day)
     drawPriorities(day)
-    drawNote("note1", day.brainDump, "Everything on your mind…")
-    drawNote("note2", day.brainDump2, "…and more")
+    drawNote("note1", day.brainDump, "Notes for today…")
+    drawNote("note2", day.brainDump2, "Notes for tomorrow…")
     state.parsed = day
     state.layout = v
     if (state.scrolledFor !== state.day) {
@@ -402,11 +403,21 @@
     var box = el("div", "editNote")
     box.contentEditable = "true"
     var html = stored ? (M.isRichText(stored) ? stored : M.plainToHtml(stored)) : ""
-    box.innerHTML = html ? safeNotes(M.tonesToColors(html, tone)) : ""
-    openSheet("Brain dump", box, function() {
+    box.innerHTML = html ? safeNotes(M.tonesToColors(html, tone)) : PE.STARTER_LIST
+    openSheet(which === 2 ? "Notes for tomorrow" : "Notes for today", box, function() {
       submit(function(d) { return PE.setNotes(M, d, which, box.innerHTML, tonePairs()) })
     })
-    setTimeout(function() { box.focus() }, 50)
+    setTimeout(function() {
+      box.focus()
+      // Caret into the (first, starter) list item, or at the end of existing notes.
+      var target = html ? box : box.querySelector("li")
+      var range = document.createRange()
+      range.selectNodeContents(target)
+      range.collapse(!!html ? false : true)
+      var sel = window.getSelection()
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }, 50)
   }
 
   $("grid").addEventListener("click", function(e) {
