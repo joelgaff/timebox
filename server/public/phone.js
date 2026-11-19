@@ -4,6 +4,7 @@
 ;(function() {
   var M = window          // TimeboxModel.js functions are globals here
   var PV = window.PhoneView
+  var PE = window.PhoneEdit
   var POLL_MS = 15000
 
   var state = {
@@ -184,7 +185,10 @@
     box.textContent = ""
     day.priorities.forEach(function(p, i) {
       var row = el("div", "priority" + (p.done ? " done" : ""))
-      row.appendChild(el("div", "check"))
+      var check = el("div", "check")
+      check.onclick = function(e) { e.stopPropagation(); toggleDone(i) }
+      row.onclick = function() { editPriority(i) }
+      row.appendChild(check)
       var text = el("div", "ptext" + (p.text ? "" : " placeholder"), p.text ? { color: tone(p.color) } : {},
         p.text || "Priority " + (i + 1))
       row.appendChild(text)
@@ -235,7 +239,9 @@
     var v = drawGrid(day)
     drawPriorities(day)
     drawNote("note1", day.brainDump, "Everything on your mind…")
-    drawNote("note2", day.brainDump2, "")
+    drawNote("note2", day.brainDump2, "…and more")
+    state.parsed = day
+    state.layout = v
     if (state.scrolledFor !== state.day) {
       state.scrolledFor = state.day
       scrollToNow(v)
@@ -250,6 +256,177 @@
     var top = grid.getBoundingClientRect().top + window.scrollY + target - headerH - (window.innerHeight - headerH) / 3
     window.scrollTo(0, Math.max(0, v.nowY !== null ? top : 0))
   }
+
+  // ---- Editing: a sheet for one thing at a time, saved straight to the Beelink ----
+
+  function quarterLabel(q) {
+    var m = M.START_HOUR * 60 + q * 15
+    var h = Math.floor(m / 60), mm = m % 60
+    return (h % 12 === 0 ? 12 : h % 12) + ":" + pad(mm) + (h < 12 ? " AM" : " PM")
+  }
+
+  function tonePairs() {
+    var c = state.profile.colors, out = []
+    for (var name in c.tones) out.push({ name: name, color: PV.css(c.tones[name]).toLowerCase() })
+    return out
+  }
+
+  var sheet = { onSave: null, onClear: null }
+
+  function openSheet(title, body, onSave, onClear) {
+    $("sheetTitle").textContent = title
+    var holder = $("sheetBody")
+    holder.textContent = ""
+    holder.appendChild(body)
+    $("sheetError").hidden = true
+    $("sheetClear").hidden = !onClear
+    sheet.onSave = onSave
+    sheet.onClear = onClear
+    $("sheet").showModal()
+  }
+
+  function field(label, input) {
+    var wrap = el("div")
+    var l = el("label", "", {}, label)
+    wrap.appendChild(l)
+    wrap.appendChild(input)
+    return wrap
+  }
+
+  function timeSelect(value, from, to) {
+    var sel = el("select")
+    for (var q = from; q <= to; q++) {
+      var o = el("option", "", {}, quarterLabel(q))
+      o.value = q
+      if (q === value) o.selected = true
+      sel.appendChild(o)
+    }
+    return sel
+  }
+
+  // Load the latest copy, apply the edit, keep a version if the rules say so, and save it
+  // only on top of that copy (If-Match); if it changed meanwhile, try once more.
+  function save(edit, tries) {
+    var key = state.day
+    var url = "/api/days/" + key
+    return fetch(url, { cache: "no-cache" }).then(function(r) {
+      if (!r.ok) throw new Error("load " + r.status)
+      var tag = r.headers.get("ETag")
+      return r.text().then(function(raw) {
+        var before = M.parseDay(raw === "{}" ? "" : raw)
+        if (!before) throw new Error("This day's file isn't valid; edit it on the laptop.")
+        var after = PE.keepVersion(M, before, edit(before), Date.now())
+        var body = M.serializeDay(key, after)
+        return fetch(url, {
+          method: "PUT", body: body,
+          headers: { "Content-Type": "application/json", "If-Match": tag, "X-Timebox-Client": "phone" }
+        }).then(function(res) {
+          if (res.status === 412 && (tries || 0) < 1) return save(edit, 1)
+          if (res.status === 401 || res.status === 403 || res.status === 405)
+            throw new Error("Editing works at timebox.joelgaff.com (signed in).")
+          if (!res.ok) throw new Error("save " + res.status)
+          if (key === state.day) { state.dayText = body; render() }
+        })
+      })
+    })
+  }
+
+  function submit(edit) {
+    $("sheetSave").disabled = true
+    return save(edit).then(function() { $("sheet").close() }).catch(function(e) {
+      $("sheetError").textContent = "Couldn't save: " + (e && e.message ? e.message : e)
+      $("sheetError").hidden = false
+    }).then(function() { $("sheetSave").disabled = false })
+  }
+
+  function editBlock(q, n) {
+    var day = state.parsed
+    var block = PE.blockAt(M, day, q) || { start: q, end: q + n, text: "" }
+    var input = el("input")
+    input.type = "text"
+    input.value = block.text
+    input.placeholder = "What's this block?"
+    input.setAttribute("enterkeyhint", "done")
+    var start = timeSelect(block.start, 0, M.SLOTS - 1)
+    var end = timeSelect(block.end, 1, M.SLOTS)
+    var times = el("div", "times")
+    times.appendChild(field("Start", start))
+    times.appendChild(field("End", end))
+    var body = el("div")
+    body.appendChild(field("Block", input))
+    body.appendChild(times)
+    var existing = !!block.text
+    openSheet(existing ? "Edit block" : "New block", body, function() {
+      var s = +start.value, e = +end.value, text = input.value.trim()
+      if (e <= s) { $("sheetError").textContent = "End must be after start."; $("sheetError").hidden = false; return }
+      submit(function(d) {
+        // Moving or resizing: clear where the block was, then write where it is now.
+        if (existing) d = PE.setBlock(M, d, block.start, block.end, "")
+        return PE.setBlock(M, d, s, e, text)
+      })
+    }, existing ? function() {
+      submit(function(d) { return PE.setBlock(M, d, block.start, block.end, "") })
+    } : null)
+    if (!existing) setTimeout(function() { input.focus() }, 50)
+  }
+
+  function editPriority(i) {
+    var p = state.parsed.priorities[i]
+    var input = el("input")
+    input.type = "text"
+    input.value = p.text
+    input.placeholder = "Priority " + (i + 1)
+    var done = el("input")
+    done.type = "checkbox"
+    done.checked = !!p.done
+    var check = el("label", "check")
+    check.appendChild(done)
+    check.appendChild(document.createTextNode("Done"))
+    var body = el("div")
+    body.appendChild(field("Priority " + (i + 1), input))
+    body.appendChild(check)
+    openSheet("Top priority", body, function() {
+      submit(function(d) { return PE.setPriority(M, d, i, { text: input.value.trim(), done: done.checked }) })
+    })
+  }
+
+  function toggleDone(i) {
+    var p = state.parsed.priorities[i]
+    if (!p.text) return editPriority(i)
+    save(function(d) { return PE.setPriority(M, d, i, { done: !d.priorities[i].done }) })
+      .catch(function(e) { setStatus("Couldn't save: " + e.message) })
+  }
+
+  function editNote(which) {
+    var stored = which === 2 ? state.parsed.brainDump2 : state.parsed.brainDump
+    var box = el("div", "editNote")
+    box.contentEditable = "true"
+    var html = stored ? (M.isRichText(stored) ? stored : M.plainToHtml(stored)) : ""
+    box.innerHTML = html ? safeNotes(M.tonesToColors(html, tone)) : ""
+    openSheet("Brain dump", box, function() {
+      submit(function(d) { return PE.setNotes(M, d, which, box.innerHTML, tonePairs()) })
+    })
+    setTimeout(function() { box.focus() }, 50)
+  }
+
+  $("grid").addEventListener("click", function(e) {
+    if (!state.layout || !state.parsed) return
+    var y = e.clientY - $("grid").getBoundingClientRect().top
+    var rows = M.buildRows(state.parsed.splits)
+    for (var i = 0; i < state.layout.rows.length; i++) {
+      var r = state.layout.rows[i]
+      if (y >= r.y && y < r.y + r.h) return editBlock(rows[i].q, rows[i].n)
+    }
+  })
+  $("note1").onclick = function() { editNote(1) }
+  $("note2").onclick = function() { editNote(2) }
+  // Save is the form's only submit button, so Return in a field saves.
+  $("sheetForm").addEventListener("submit", function(e) {
+    e.preventDefault()
+    if (sheet.onSave) sheet.onSave()
+  })
+  $("sheetCancel").onclick = function() { $("sheet").close() }
+  $("sheetClear").onclick = function() { if (sheet.onClear) sheet.onClear() }
 
   // ---- Loading ----
 

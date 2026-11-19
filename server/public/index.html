@@ -50,9 +50,23 @@
   </section>
 </main>
 
+<dialog id="sheet">
+  <form method="dialog" id="sheetForm">
+    <h3 id="sheetTitle"></h3>
+    <div id="sheetBody"></div>
+    <p id="sheetError" hidden></p>
+    <div class="sheetButtons">
+      <button type="button" id="sheetCancel">Cancel</button>
+      <button type="button" id="sheetClear" hidden>Clear</button>
+      <button type="submit" id="sheetSave" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <script src="/shared/TimeboxModel.js"></script>
 <script src="/shared/TimeboxLook.js"></script>
 <script src="/phone-view.js"></script>
+<script src="/phone-edit.js"></script>
 <script src="/phone.js"></script>
 </body>
 </html>

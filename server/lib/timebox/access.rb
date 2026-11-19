@@ -81,6 +81,8 @@ module Timebox
 
     # Rack middleware in front of everything (static files included) on the public door.
     class Gate
+      DAY_PATH = %r{\A/api/days/\d{4}-\d{2}-\d{2}\z}
+
       def initialize(app, settings)
         @app = app
         @settings = settings
@@ -89,7 +91,10 @@ module Timebox
       def call(env)
         access = @settings.public_access
         return @app.call(env) unless access
-        return deny(405, "read-only") unless %w[GET HEAD].include?(env["REQUEST_METHOD"])
+        reading = %w[GET HEAD].include?(env["REQUEST_METHOD"])
+        # The phone may save a day (PUT); nothing else changes through here.
+        saving_day = env["REQUEST_METHOD"] == "PUT" && env["PATH_INFO"].match?(DAY_PATH)
+        return deny(405, "read-only") unless reading || saving_day
         token = env["HTTP_CF_ACCESS_JWT_ASSERTION"] || Rack::Request.new(env).cookies["CF_Authorization"]
         kid = begin
           JSON.parse(Access.b64decode(token.to_s.split(".").first.to_s))["kid"]
@@ -102,6 +107,10 @@ module Timebox
         # Only the allowed emails, even if the Access policy were ever loosened by mistake.
         allowed = Array(access[:emails]).map(&:downcase)
         return deny(403, "not allowed") unless allowed.include?(claims["email"].to_s.downcase)
+        # Saves must come from the phone page: a custom header that another site's form or
+        # script can't send (no CORS here), so a signed-in browser can't be tricked into it.
+        return deny(403, "saves come from the Timebox page") if saving_day && env["HTTP_X_TIMEBOX_CLIENT"] != "phone"
+        env["timebox.access_email"] = claims["email"]
         @app.call(env)
       end
 

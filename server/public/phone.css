@@ -225,3 +225,49 @@ h2 {
 .note + .note { margin-top: calc(var(--s) * var(--dumpPad)); }
 .note p { margin: 0; min-height: 1em; }
 .note ul, .note ol { margin: 0; padding-left: 1.2em; }
+
+/* ---- Editing: tap a block, a priority or the notes; a sheet slides up ---- */
+#grid, .ptext, .note { cursor: pointer; }
+dialog#sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 16px calc(var(--gutter) + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(var(--gutter) + env(safe-area-inset-left));
+  max-height: 85vh;
+  overflow: auto;
+}
+dialog#sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
+#sheet h3 { margin: 0 0 12px; font-size: var(--heading); }
+#sheet label { display: block; margin: 10px 0 4px; font-size: var(--bodySmall); color: var(--muted); }
+#sheet input[type=text], #sheet select, #sheet .editNote {
+  width: 100%;
+  font: inherit;
+  color: var(--fg);
+  background: var(--dumpFill);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+#sheet input[type=text], #sheet .editNote {
+  font-family: var(--hand);
+  font-size: max(16px, calc(var(--heading) * var(--handScale))); /* 16px+ so iOS doesn't zoom */
+}
+#sheet .editNote { min-height: 40vh; line-height: 1.2; overflow-wrap: anywhere; }
+#sheet .editNote p { margin: 0; min-height: 1em; }
+#sheet select { font-size: 16px; }
+#sheet .times { display: flex; gap: 10px; }
+#sheet .times > div { flex: 1; }
+#sheet .check { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: var(--fg); font-size: var(--body); }
+#sheet .check input { width: 22px; height: 22px; accent-color: var(--accent); }
+#sheetError { color: var(--urgent); font-size: var(--bodySmall); margin: 10px 0 0; }
+.sheetButtons { display: flex; gap: 8px; margin-top: 16px; }
+.sheetButtons button { flex: 1; height: 44px; font-size: var(--body); }
+.sheetButtons .primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: bold; }
+#sheetClear { color: var(--urgent); }

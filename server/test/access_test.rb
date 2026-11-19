@@ -80,16 +80,46 @@ class AccessTest < Minitest::Test
     assert_equal 200, last_response.status
   end
 
+  # The phone saves days through the public door: signed in through Access, with the
+  # phone's header (a cross-site form or script can't send it, so no CSRF).
+  def test_signed_in_phone_can_save_a_day
+    signed_in
+    header "X-Timebox-Client", "phone"
+    header "Content-Type", "application/json"
+    get "/api/days/2030-01-01"
+    tag = last_response.headers["ETag"]
+    header "If-Match", tag
+    put "/api/days/2030-01-01", '{"date":"2030-01-01","slots":{"09:00":"From phone"}}'
+    assert_equal 200, last_response.status, last_response.body
+    get "/api/days/2030-01-01"
+    assert_includes last_response.body, "From phone"
+  end
+
+  def test_phone_save_needs_the_phone_header_and_sign_in
+    signed_in
+    header "If-Match", '"none"'
+    header "Content-Type", "application/json"
+    put "/api/days/2030-01-03", "{}"
+    assert_equal 403, last_response.status
+    signed_in("nope")
+    header "X-Timebox-Client", "phone"
+    put "/api/days/2030-01-03", "{}"
+    assert_equal 403, last_response.status
+  end
+
   def test_no_writes_through_the_public_door
     File.write(File.join(@dir, "tokens.json"), JSON.generate("laptop" => "L" * 32, "grokbot" => "G" * 32))
     signed_in
     header "Authorization", "Bearer #{'L' * 32}"
     header "If-Match", '"none"'
-    put "/api/days/2030-01-02", "{}"
-    assert_equal 405, last_response.status
+    header "X-Timebox-Client", "phone"
     post "/api/plans", '{"blocks":[]}'
     assert_equal 405, last_response.status
     put "/api/view", "{}"
+    assert_equal 405, last_response.status
+    put "/api/fonts/x.woff2", "x"
+    assert_equal 405, last_response.status
+    delete "/api/days/2030-01-01"
     assert_equal 405, last_response.status
   end
 

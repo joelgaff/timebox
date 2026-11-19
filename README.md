@@ -126,6 +126,14 @@ with Tailscale on), then Share → Add to Home Screen. It shows the latest plan:
 bar (Schedule · Priorities · Notes), the schedule opened at the current time, then the top
 priorities and the brain dump. It refreshes every 15 seconds while on screen.
 
+Editing (at `timebox.joelgaff.com`, signed in): tap a block or an empty row to name, move,
+resize or clear it (start and end in 15-minute steps); tap a priority to edit it or its circle
+to mark it done; tap a notes box to edit it (colors are kept). Each save loads the latest copy,
+applies the edit and saves it only on top of that copy, retrying once if the day changed.
+Like the desktop, a time change keeps the old plan as a version (`source: phone`, one per
+45-minute round) and wiping most of a note keeps it as a `notes` version. The editing logic is
+in `server/public/phone-edit.js` (tested in `tests/phone-edit.test.js`).
+
 ## Web and Android
 
 The original Timebox is also available as a web and Android app (without this fork's changes):
@@ -227,7 +235,10 @@ phone ─► timebox.joelgaff.com ─► Cloudflare Access (sign in: one-time co
 - **The server checks too**: `timebox-public` (port 4592, `TIMEBOX_ACCESS_TEAM` and
   `TIMEBOX_ACCESS_AUD` in `~/.config/timebox-server/public.env`) answers only requests with a
   valid Access JWT for this app (signature against the team's keys, issuer, audience, expiry),
-  static files included, only for the emails in `TIMEBOX_ACCESS_EMAILS`, and only GET/HEAD. Without that, it's a bare 403, even if Access were
+  static files included, only for the emails in `TIMEBOX_ACCESS_EMAILS`. It allows only
+  GET/HEAD, plus PUT of a day from the phone page (which sends `X-Timebox-Client: phone`, a
+  header other sites' forms and scripts can't send, so a signed-in browser can't be tricked
+  into saving); plans, the view profile and fonts can't be changed through it. Without that, it's a bare 403, even if Access were
   switched off by mistake. Tests: `server/test/access_test.rb`.
 - **Tunnel**: `timebox-tunnel` (systemd user service) runs `cloudflare/cloudflared` (pinned tag)
   with the tunnel token from `~/.config/timebox-server/tunnel.env`. DNS: `timebox` is a proxied
@@ -267,8 +278,8 @@ the reminder setting lives in `settings.json` in the same folder.
 - `splits`: the half hours shown as two 15-minute rows (`["12:30"]`).
 - `versions`: earlier versions of the day, each with `at` (when it was kept), its `slots`,
   `splits` and colors, the two notes boxes (`notes`, `notes2`), and a `source` (`auto`,
-  `import`, `restore`, `notes` when a save would have wiped most of a note, or `conflict` for
-  an edit that lost a race with an import; none when you pressed Snapshot).
+  `import`, `restore`, `phone`, `notes` when a save would have wiped most of a note, or
+  `conflict` for an edit that lost a race with an import; none when you pressed Snapshot).
 
 Days saved before this format load unchanged; entries outside 6 AM to 8 PM are kept but not shown.
 If a day's file can't be read or isn't valid JSON, the planner opens it read-only with a warning

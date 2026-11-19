@@ -93,6 +93,9 @@ module Timebox
 
       # Halts unless the request carries a key allowed to do `scope`.
       def require_key(scope)
+        # Signed in through Cloudflare Access on the public door (the gate checked it):
+        # that's the phone, which may save days.
+        return if scope == :days && request.env["timebox.access_email"]
         given = request.env["HTTP_AUTHORIZATION"].to_s[/\ABearer (.+)\z/, 1].to_s
         ok = !given.empty? && tokens.any? do |name, key|
           SCOPES.fetch(name, []).include?(scope) && key.is_a?(String) && !key.empty? &&
