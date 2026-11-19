@@ -1,7 +1,7 @@
 const test = require("node:test")
 const assert = require("node:assert")
 const M = require("./load")("TimeboxModel.js", ["parseDay", "serializeDay", "shapeOf", "slotsToMap", "splitList",
-  "notesShrank", "colorsToTones", "isRichText", "slotKey", "START_HOUR", "SLOTS"])
+  "notesShrank", "colorsToTones", "isRichText", "slotKey", "START_HOUR", "SLOTS", "onlyDashes", "dashReturn", "DASH"])
 const E = require("../server/public/phone-edit.js")
 
 const q = (h, m) => ((h - M.START_HOUR) * 60 + m) / 15   // quarter index
@@ -80,13 +80,14 @@ test("browser rgb() colors map back to theme names", () => {
   assert.match(out(d).brainDump2, /color:tb-red/)
 })
 
-test("an empty starter list saves as no notes; a list with items is kept", () => {
-  assert.strictEqual(out(E.setNotes(M, day(), 2, "<ul><li><br></li></ul>", [])).brainDump2, undefined)
-  assert.match(out(E.setNotes(M, day(), 2, "<ul><li>Call mom</li><li><br></li></ul>", [])).brainDump2, /<li>Call mom<\/li>/)
+test("an untouched starter dash saves as no notes; dashed lines are kept", () => {
+  assert.strictEqual(out(E.setNotes(M, day(), 2, E.STARTER, [])).brainDump2, undefined)
+  assert.strictEqual(out(E.setNotes(M, day(), 2, "<p>- </p><p>- </p>", [])).brainDump2, undefined)
+  assert.match(out(E.setNotes(M, day(), 2, "<p>- Call mom</p><p>- </p>", [])).brainDump2, /- Call mom/)
 })
 
-test("an empty notes box starts as a list", () => {
-  assert.strictEqual(E.STARTER_LIST, "<ul><li><br></li></ul>")
+test("an empty notes box starts with a dash", () => {
+  assert.strictEqual(E.STARTER, "<p>- </p>")
 })
 
 test("priorities", () => {

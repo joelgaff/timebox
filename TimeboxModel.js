@@ -126,6 +126,22 @@ function notesShrank(before, after) {
   return a >= 20 && a - b >= 20 && b < a / 2
 }
 
+// Notes lists are dashed lines ("- item"), on the desktop and the phone alike. An empty
+// notes box starts with a dash; Return after a dashed line starts the next one; Return on
+// an empty dash ends the list.
+var DASH = "- "
+
+function dashReturn(line) {
+  var m = /^(\s*)-( |$)(.*)$/.exec(String(line || ""))
+  if (!m) return null
+  return m[3].trim() ? "continue" : "end"
+}
+
+// Plain text of a note that holds nothing but dashes (an untouched starter).
+function onlyDashes(text) {
+  return /^[\s-]*$/.test(String(text || "")) && /-/.test(String(text || ""))
+}
+
 // Keep only colors from Qt's generated HTML, so the stored note follows the
 // planner's current font and size instead of freezing the ones in use today.
 function cleanRichText(html) {

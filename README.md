@@ -14,7 +14,9 @@ days, takes plans from Grok Bot, and serves a read-only phone view.
 
 - **Top Priorities**: three items; click the circle to mark one done.
 - **Brain Dump**: free-form notes on a dotted pad, in two columns: **Today** (left) and
-  **Tomorrow** (right). An empty box starts as a bulleted list when you click in.
+  **Tomorrow** (right). Notes are dashed lists: an empty box starts with `- ` when you click in,
+  Return after a dashed line starts the next one, and Return on an empty dash ends the list
+  (the same on the phone). Tests: `QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input tests/qml`.
 - **Schedule**: one column of half-hour rows, 6 AM to 8 PM, that scrolls when the window is short.
   Consecutive rows with the same text are drawn as one boxed timebox; every block gets a box.
 - **15-minute rows**: click a time label (`9` or `:30`) to split that half hour into two
@@ -105,8 +107,9 @@ Grok Bot ──plan──►  Beelink: server/ + day files + backups  ◄── 
 - **Pinned**: Ruby in `server/mise.toml` (run through `server/bin/ruby`, so system updates can't
   change it) and gems in `Gemfile.lock`. Update on purpose: bump, `bundle install`, run the
   tests, deploy.
-- **Tests**: `cd server && bin/ruby -S bundle exec rake` (server) and `node --test tests/`
-  (planner and phone JS). Tests come first.
+- **Tests**: `cd server && bin/ruby -S bundle exec rake` (server), `node --test tests/`
+  (planner and phone JS) and `QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input
+  tests/qml` (notes typing in Qt). Tests come first.
 - **Deploy**: `server/bin/deploy` copies the code to `~/apps/timebox-server` on the Beelink,
   installs Ruby and gems, runs the tests there, installs the `timebox-server` systemd user
   service and restarts it. Data lives in `~/.local/share/timebox-server/` (day files as below,

@@ -6,6 +6,7 @@ import qs.Ui
 import "TimeboxModel.js" as Model
 import "TimeboxServer.js" as Server
 import "TimeboxLook.js" as Look
+import "TimeboxNotes.js" as Notes
 
 Item {
   id: root
@@ -170,7 +171,7 @@ Item {
   // Notes in the stored form (theme colors as names), or "" when empty.
   function storedNotes(which) {
     var edit = which === 2 ? dumpEdit2 : dumpEdit
-    if (!edit.length) return ""
+    if (Notes.isEmpty(edit)) return ""
     return Model.colorsToTones(Model.cleanRichText(which === 2 ? root.brainDump2 : root.brainDump), root.tonePairs())
   }
 
@@ -178,17 +179,14 @@ Item {
     return Model.tonesToColors(Model.isRichText(stored) ? stored : Model.plainToHtml(stored), root.tone)
   }
 
-  // An empty notes box starts as a bulleted list when you click in, and goes back to
-  // empty (placeholder showing) if you leave it without writing anything.
-  readonly property string listStarter: "<ul><li></li></ul>"
-  function starterList(edit, focused, target) {
+  // Notes are dashed lists: an empty box starts with "- " when you click in and empties
+  // again if left untouched (TimeboxNotes.js). Those changes aren't edits, so no save.
+  function notesFocus(edit, focused, target) {
     if (focused) root.colorTarget = target
-    if (root.locked || edit.length > 0) return
     var was = root.loading
     root.loading = true
-    edit.text = focused ? root.listStarter : ""
+    Notes.focusChanged(edit, focused)
     root.loading = was
-    if (focused) edit.cursorPosition = 0
   }
 
   function versionHasNotes(v) {
@@ -1324,7 +1322,9 @@ Item {
                 selectByMouse: true
                 persistentSelection: true
                 readOnly: root.locked
-                onActiveFocusChanged: root.starterList(dumpEdit, activeFocus, "dump1")
+                onActiveFocusChanged: root.notesFocus(dumpEdit, activeFocus, "dump1")
+                Keys.onReturnPressed: function(event) { Notes.returnPressed(dumpEdit, event) }
+                Keys.onEnterPressed: function(event) { Notes.returnPressed(dumpEdit, event) }
                 onCursorRectangleChanged: dumpFlick.ensureVisible(cursorRectangle)
                 onTextChanged: if (!root.loading && !root.locked) { root.brainDump = text; root.scheduleSave() }
                 Keys.onEscapePressed: root.dismiss()
@@ -1395,7 +1395,9 @@ Item {
                 selectByMouse: true
                 persistentSelection: true
                 readOnly: root.locked
-                onActiveFocusChanged: root.starterList(dumpEdit2, activeFocus, "dump2")
+                onActiveFocusChanged: root.notesFocus(dumpEdit2, activeFocus, "dump2")
+                Keys.onReturnPressed: function(event) { Notes.returnPressed(dumpEdit2, event) }
+                Keys.onEnterPressed: function(event) { Notes.returnPressed(dumpEdit2, event) }
                 onCursorRectangleChanged: dumpFlick2.ensureVisible(cursorRectangle)
                 onTextChanged: if (!root.loading && !root.locked) { root.brainDump2 = text; root.scheduleSave() }
                 Keys.onEscapePressed: root.dismiss()

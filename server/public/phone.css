@@ -223,6 +223,7 @@ h2 {
   font-size: calc(var(--title) * var(--handScale) * var(--dumpTitleScale));
   line-height: 1.2;
   overflow-wrap: anywhere;
+  white-space: pre-wrap; /* keep spaces as typed, as Qt does ("- " stays "- ") */
 }
 .noteCaption {
   font-size: var(--caption);
@@ -269,7 +270,7 @@ dialog#sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
   font-family: var(--hand);
   font-size: max(16px, calc(var(--heading) * var(--handScale))); /* 16px+ so iOS doesn't zoom */
 }
-#sheet .editNote { min-height: 40vh; line-height: 1.2; overflow-wrap: anywhere; }
+#sheet .editNote { min-height: 40vh; line-height: 1.2; overflow-wrap: anywhere; white-space: pre-wrap; }
 #sheet .editNote p { margin: 0; min-height: 1em; }
 #sheet select { font-size: 16px; }
 #sheet .times { display: flex; gap: 10px; }

@@ -398,22 +398,48 @@
       .catch(function(e) { setStatus("Couldn't save: " + e.message) })
   }
 
+  // Return in the notes editor: after a dashed line, start the next "- "; on an empty
+  // dash, end the list (same rule as the desktop, TimeboxModel.js dashReturn).
+  function dashReturn(e) {
+    if (e.inputType !== "insertParagraph" && e.inputType !== "insertLineBreak") return
+    var sel = window.getSelection()
+    if (!sel.rangeCount) return
+    var box = e.currentTarget, r = sel.getRangeAt(0)
+    var block = r.startContainer
+    while (block && block !== box && block.parentNode !== box) block = block.parentNode
+    var before = document.createRange()
+    before.selectNodeContents(block && block !== box ? block : box)
+    before.setEnd(r.startContainer, r.startOffset)
+    var frag = before.cloneContents()
+    frag.querySelectorAll("br").forEach(function(b) { b.replaceWith("\n") })
+    var line = frag.textContent.split("\n").pop().replace(/\u00a0/g, " ")
+    var action = M.dashReturn(line)
+    if (!action) return
+    e.preventDefault()
+    if (action === "continue") {
+      document.execCommand("insertParagraph")
+      document.execCommand("insertText", false, M.DASH)
+    } else {
+      for (var i = 0; i < line.length; i++) document.execCommand("delete")
+    }
+  }
+
   function editNote(which) {
     var stored = which === 2 ? state.parsed.brainDump2 : state.parsed.brainDump
     var box = el("div", "editNote")
     box.contentEditable = "true"
     var html = stored ? (M.isRichText(stored) ? stored : M.plainToHtml(stored)) : ""
-    box.innerHTML = html ? safeNotes(M.tonesToColors(html, tone)) : PE.STARTER_LIST
+    box.innerHTML = html ? safeNotes(M.tonesToColors(html, tone)) : PE.STARTER
+    box.addEventListener("beforeinput", dashReturn)
     openSheet(which === 2 ? "Notes for tomorrow" : "Notes for today", box, function() {
       submit(function(d) { return PE.setNotes(M, d, which, box.innerHTML, tonePairs()) })
     })
     setTimeout(function() {
       box.focus()
-      // Caret into the (first, starter) list item, or at the end of existing notes.
-      var target = html ? box : box.querySelector("li")
+      // Caret at the end: after the starter dash, or after the existing notes.
       var range = document.createRange()
-      range.selectNodeContents(target)
-      range.collapse(!!html ? false : true)
+      range.selectNodeContents(box)
+      range.collapse(false)
       var sel = window.getSelection()
       sel.removeAllRanges()
       sel.addRange(range)

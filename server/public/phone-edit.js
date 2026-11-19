@@ -5,8 +5,8 @@
 // one per 45-minute round) and before notes are wiped.
 ;(function(root) {
   var ROUND_MS = 45 * 60 * 1000
-  // An empty notes box starts as a bulleted list (the desktop does the same).
-  var STARTER_LIST = "<ul><li><br></li></ul>"
+  // Notes are dashed lists; an empty notes box starts with a dash (as on the desktop).
+  var STARTER = "<p>- </p>"
 
   function copy(day) { return JSON.parse(JSON.stringify(day)) }
 
@@ -48,9 +48,9 @@
   // ("tb-red"), or "" when nothing's written.
   function setNotes(M, day, which, html, tonePairs) {
     var d = copy(day)
-    var text = String(html || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim()
+    var text = String(html || "").replace(/<[^>]*>/g, "\n").replace(/&nbsp;/g, " ").trim()
     var stored = ""
-    if (text) {
+    if (text && !M.onlyDashes(text)) {
       // Browsers write colors as rgb(); the stored form uses #rrggbb (then theme names).
       html = String(html).replace(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g, function(_, r, g, b) {
         return "#" + [r, g, b].map(function(n) { return ("0" + (+n).toString(16)).slice(-2) }).join("")
@@ -98,7 +98,7 @@
     return d
   }
 
-  var api = { STARTER_LIST: STARTER_LIST, setBlock: setBlock, blockAt: blockAt, setPriority: setPriority, setNotes: setNotes, keepVersion: keepVersion }
+  var api = { STARTER: STARTER, setBlock: setBlock, blockAt: blockAt, setPriority: setPriority, setNotes: setNotes, keepVersion: keepVersion }
   if (typeof module !== "undefined" && module.exports) module.exports = api
   else root.PhoneEdit = api
 })(this)
